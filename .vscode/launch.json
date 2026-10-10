@@ -1,0 +1,25 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            //"program": "c:/proj/sec/script/mdm_sec/sec_core/zuc/sec_zuc_ctrl.py",
+            "program": "c:/proj/sec/script/mdm_sec/main.py",
+            "console": "integratedTerminal",
+            // agrs[0]:DEBUG_EN
+            //"args":[ ]
+                     
+            //"args": "-top mdm_ss -hier_level 7 -dir C:/proj/verilog"
+            //"args": "-list C:/proj/verilog/test_trees.list -hier_level 7"
+            //"args": "-top mdm_blk_top -hier_level 3 -dir C:/proj/verilog"
+            //--vcd_file=C:\\proj\\script\\vcd2wgl\\waves\\waves_0212\\waves_0212\\ate_waves.vcd
+            //C:\\proj\\script\\vcd2wgl\\waves\\0.soc__m 3_func_mode248_test\\0.soc__m3_func_mode248_test\\waves.vcd
+            //"--filter_debug_file = C:\\proj\\script\\vcd2wgl\\waves\\waves_0212\\waves_0212\\ate_waves_filter.vcd
+        }
+    ]
+}
