@@ -96,9 +96,12 @@ def fun_cipher(enc_iv,enc_key,enc_data:data_desc,cipher_data:data_desc):
         cipher_data.data_len = enc_data.data_len
 
 def fun_gen_mac(int_iv,int_key,int_data:data_desc,o_mac_data:data_desc):
+    '''
     mac = 0
     int_stream = []
     # calc K1, K2
+    if int_data.data_len == 8:
+        debug = 0
     K1=0
     K2 = 0
     c = 0x87
@@ -138,6 +141,9 @@ def fun_gen_mac(int_iv,int_key,int_data:data_desc,o_mac_data:data_desc):
                         case 0:
                             tmp_m = 1 << 31
                 m.append(tmp_m)
+            # len=0:
+            if int_data.data_len == 0:
+                m.append(1 << 31)
         elif i == 0: #first
             m.extend(int_iv)
             for j in range(min(msg_len,2)):
@@ -193,6 +199,181 @@ def fun_gen_mac(int_iv,int_key,int_data:data_desc,o_mac_data:data_desc):
     o_mac_data.data_vld.append(1)
     o_mac_data.last.append(1)
     o_mac_data.data_len = 4
+    return int_stream
+    '''
+    """
+    AES-CMAC Golden Model
+
+    输入：
+        int_iv: [COUNT, BEARER_DIRECTION]
+        int_key: 4 x 32-bit
+        int_data: data_desc
+        o_mac_data: data_desc
+
+    输出：
+        32-bit MAC
+    """
+
+    # =========================================
+    # 1. AES Key Expansion
+    # =========================================
+
+    w = sec_aes_core_int.aes_int_key_exp(int_key)
+
+    # =========================================
+    # 2. Generate CMAC Subkeys
+    # =========================================
+
+    L_words = sec_aes_core_int.aes_int_core(
+        [0, 0, 0, 0],
+        w
+    )
+
+    L = comb_128block(L_words)
+
+    MASK128 = (1 << 128) - 1
+
+    def cmac_double(x):
+        result = (x << 1) & MASK128
+
+        if (x >> 127) & 1:
+            result ^= 0x87
+
+        return result
+
+    K1 = cmac_double(L)
+    K2 = cmac_double(K1)
+
+    # =========================================
+    # 3. Build Complete CMAC Message
+    # =========================================
+
+    message = bytearray()
+
+    # 64-bit prefix
+    for word in int_iv:
+        message.extend(
+            word.to_bytes(4, byteorder="big")
+        )
+
+    # Original message
+    bytes_remaining = int_data.data_len
+
+    for word in int_data.data:
+
+        if bytes_remaining <= 0:
+            break
+
+        valid = min(4, bytes_remaining)
+
+        word_bytes = word.to_bytes(
+            4,
+            byteorder="big"
+        )
+
+        message.extend(word_bytes[:valid])
+
+        bytes_remaining -= valid
+
+    # =========================================
+    # 4. Split into 128-bit Blocks
+    # =========================================
+
+    message_len = len(message)
+
+    complete = (message_len % 16 == 0)
+
+    blocks = []
+
+    for offset in range(0, message_len, 16):
+        blocks.append(
+            bytes(message[offset:offset+16])
+        )
+
+    # =========================================
+    # 5. Last Block Padding
+    # =========================================
+
+    if complete:
+
+        last_block = blocks[-1]
+
+        last_value = int.from_bytes(
+            last_block,
+            byteorder="big"
+        ) ^ K1
+
+    else:
+
+        last_block = blocks[-1]
+
+        padded = bytearray(last_block)
+
+        padded.append(0x80)
+
+        while len(padded) < 16:
+            padded.append(0)
+
+        last_value = int.from_bytes(
+            padded,
+            byteorder="big"
+        ) ^ K2
+
+    # =========================================
+    # 6. CBC-MAC Calculation
+    # =========================================
+
+    cbc_state = 0
+
+    int_stream = []
+
+    for block in blocks[:-1]:
+
+        block_value = int.from_bytes(
+            block,
+            byteorder="big"
+        )
+
+        aes_input = block_value ^ cbc_state
+
+        aes_input_words = split_128block(aes_input)
+
+        aes_output_words = sec_aes_core_int.aes_int_core(
+            aes_input_words,
+            w
+        )
+
+        cbc_state = comb_128block(
+            aes_output_words
+        )
+
+        int_stream.append(aes_output_words)
+
+    # Final block
+    aes_input = last_value ^ cbc_state
+
+    aes_input_words = split_128block(aes_input)
+
+    aes_output_words = sec_aes_core_int.aes_int_core(
+        aes_input_words,
+        w
+    )
+
+    cbc_state = comb_128block(aes_output_words)
+
+    int_stream.append(aes_output_words)
+
+    # =========================================
+    # 7. 32-bit MAC
+    # =========================================
+
+    mac = (cbc_state >> 96) & 0xFFFFFFFF
+
+    o_mac_data.data.append(mac)
+    o_mac_data.data_vld.append(1)
+    o_mac_data.last.append(1)
+    o_mac_data.data_len = 4
+
     return int_stream
 
 def run_aes(

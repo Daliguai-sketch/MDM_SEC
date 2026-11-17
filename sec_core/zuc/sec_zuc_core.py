@@ -44,8 +44,12 @@ S1 = [
 ]
 
 def ADDM(a, b):
+    ZUC_MOD = 0x7FFFFFFF
+    a &= ZUC_MOD
+    b &= ZUC_MOD
     c = a + b
-    return ((c & 0x7FFFFFFF) + (c >> 31)) & 0x7FFFFFFF
+    c = (c & ZUC_MOD) + (c >> 31)
+    return c & ZUC_MOD
 
 def ROT(x, k):
     return ((x << k) | (x >> (32 - k))) & 0xFFFFFFFF
@@ -64,6 +68,19 @@ def SBOX(X):
     return (S0[b0] << 24) | (S1[b1] << 16) | (S0[b2] << 8) | S1[b3]
 
 def init_parameters(key, iv, s:List[int],r:List[int]):
+    #add check para
+    if len(key) != 4:
+        raise ValueError("ZUC key must contain four 32-bit words")
+
+    if len(iv) != 4:
+        raise ValueError("ZUC IV must contain four 32-bit words")
+
+    if len(s) != 16:
+        raise ValueError("ZUC LFSR must contain 16 stages")
+
+    if len(r) != 2:
+        raise ValueError("ZUC FSM must contain two registers")
+    
     EK_d = [
     0x44D7, 0x26BC, 0x626B, 0x135E, 0x5789, 0x35E2, 0x7135, 0x09AF,
     0x4D78, 0x2F13, 0x6BC4, 0x1AF1, 0x5E26, 0x3C4D, 0x789A, 0x47AC
@@ -76,24 +93,49 @@ def init_parameters(key, iv, s:List[int],r:List[int]):
             iv_byte = (iv_word >> 8*(3-j)) & 0xFF
             s_byte = ((key_byte << 23) | EK_d[4*i+j] << 8) | iv_byte
             s[4*i+j] = s_byte
+    for word in key:
+        if not (0 <= word <= 0xFFFFFFFF):
+            raise ValueError("Invalid ZUC key word")
+
+    for word in iv:
+        if not (0 <= word <= 0xFFFFFFFF):
+            raise ValueError("Invalid ZUC IV word")
     r[0] = 0
     r[1] = 0
 
+def ROT31(x, k):
+    """
+    31-bit rotate left.
+    """
+    x &= 0x7FFFFFFF
+
+    return (
+        ((x << k) | (x >> (31 - k)))
+        & 0x7FFFFFFF
+    )
+
 def zuc_lsfr(s:list[int],u):
-    v0 = ((s[0]  << 8) | (s[0]  >> (31-8 ))) & 0x7FFFFFFF
-    v4 = ((s[4]  <<20) | (s[4]  >> (31-20))) & 0x7FFFFFFF
-    v10= ((s[10] <<21) | (s[10] >> (31-21))) & 0x7FFFFFFF
-    v13= ((s[13] <<17) | (s[13] >> (31-17))) & 0x7FFFFFFF
-    v15= ((s[15] <<15) | (s[15] >> (31-15))) & 0x7FFFFFFF
-    f1 = ADDM(s[0], v0)
-    f2 = ADDM(f1, v4)
-    f3 = ADDM(f2, v10)
-    f4 = ADDM(f3, v13)
-    f5 = ADDM(f4, v15)
-    f6 = ADDM(f5, u)
+    v0  = ROT31(s[0], 8)
+    v4  = ROT31(s[4], 20)
+    v10 = ROT31(s[10], 21)
+    v13 = ROT31(s[13], 17)
+    v15 = ROT31(s[15], 15)
+
+    f = ADDM(s[0], v0)
+    f = ADDM(f, v4)
+    f = ADDM(f, v10)
+    f = ADDM(f, v13)
+    f = ADDM(f, v15)
+    f = ADDM(f, u)
+
+    # ZUC requires nonzero LFSR feedback.
+    if f == 0:
+        f = 0x7FFFFFFF
+
     for i in range(15):
-        s[i] = s[i+1]
-    s[15] = f6
+        s[i] = s[i + 1]
+
+    s[15] = f
 
     return s
 
@@ -121,7 +163,7 @@ def zuc_core(init:int,w:int,s:list[int],r:list[int]):
     u = 0
     x0,x1,x2,x3 = zuc_br(s[0],s[2],s[5],s[7],s[9],s[11],s[14],s[15])
     r,w = zuc_fsm(x0,x1,x2,r)
-    zt = x3 ^ w
+    zt = (x3 ^ w) & 0xFFFFFFFF
     if init:
         u = (w >> 1) & 0x7FFFFFFF
     else:

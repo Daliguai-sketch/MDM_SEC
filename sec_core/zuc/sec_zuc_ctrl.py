@@ -147,6 +147,7 @@ def fun_cipher(enc_stream:List,enc_data:data_desc,cipher_data:data_desc):
         cipher_data.last.append(enc_data.last[i])
         cipher_data.data_len = enc_data.data_len
 
+'''
 def calc_mac(msg,z0,z1):
     T = 0
     z = []
@@ -166,8 +167,95 @@ def calc_mac(msg,z0,z1):
         if bin_msg_list[i] == 1:
             T ^= z_int
     return T
+'''
+def get_word(int_stream, bit_index):
+    """
+    Extract 32 consecutive keystream bits
+    starting at bit_index.
+
+    MSB-first.
+    """
+
+    word_index = bit_index // 32
+    bit_offset = bit_index % 32
+
+    if bit_offset == 0:
+        return int_stream[word_index] & 0xFFFFFFFF
+
+    z0 = int_stream[word_index]
+    z1 = int_stream[word_index + 1]
+
+    return (
+        ((z0 << bit_offset) & 0xFFFFFFFF)
+        | (z1 >> (32 - bit_offset))
+    ) & 0xFFFFFFFF
 
 def fun_gen_mac(int_stream:List,int_data:data_desc,o_mac_data:data_desc):
+    """
+    ZUC 128-EIA3 MAC.
+
+    Message length is measured in bytes.
+    Message bit ordering is MSB-first.
+    """
+
+    msg_len = int_data.data_len
+    bit_len = msg_len * 8
+
+    required_words = math.ceil(bit_len / 32) + 2
+
+    if len(int_stream) < required_words:
+        raise ValueError(
+            f"Insufficient keystream: "
+            f"required={required_words}, "
+            f"actual={len(int_stream)}"
+        )
+
+    # Convert 32-bit input words into message bytes.
+    msg = bytearray()
+
+    for word in int_data.data:
+        msg.extend(
+            (word & 0xFFFFFFFF).to_bytes(4, "big")
+        )
+
+    msg = msg[:msg_len]
+
+    if len(msg) != msg_len:
+        raise ValueError("Input message shorter than data_len")
+
+    T = 0
+
+    # Process actual message bits.
+    for bit_index in range(bit_len):
+
+        byte_index = bit_index // 8
+        bit_in_byte = 7 - (bit_index % 8)
+
+        if (msg[byte_index] >> bit_in_byte) & 1:
+
+            T ^= get_word(
+                int_stream,
+                bit_index
+            )
+
+    # Final length-dependent keystream window.
+    T ^= get_word(
+        int_stream,
+        bit_len
+    )
+
+    # Final keystream XOR.
+    T ^= int_stream[math.ceil(bit_len / 32) + 1]
+
+    mac = T & 0xFFFFFFFF
+
+    o_mac_data.data.append(mac)
+    o_mac_data.data_vld.append(1)
+    o_mac_data.last.append(1)
+    o_mac_data.data_len = 4
+
+    return mac
+    '''
     mac = 0
     L = math.ceil(int_data.data_len/4) + 2
     msg = []
@@ -204,6 +292,7 @@ def fun_gen_mac(int_stream:List,int_data:data_desc,o_mac_data:data_desc):
     o_mac_data.data_vld.append(1)
     o_mac_data.last.append(1)
     o_mac_data.data_len = 4
+    '''
 
 def run_zuc(
         i_sec_mode,

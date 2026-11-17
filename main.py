@@ -52,7 +52,7 @@ if __name__ == "__main__":
 
     #run_sec_core(i_sec_mode,i_start,i_int_alg_id,i_enc_alg_id,i_count,i_bearer,i_direction,i_int_key,i_enc_key,i_enc_data,i_int_data,o_cipher_data,o_mac_data)
 
-    tv_path = "C:\proj\sec\script\mdm_sec\\tv\cmd_8_aes"
+    tv_path = "C:\proj\sec\script\mdm_sec\\tv\cmd_4_aes"
     tv = read_tv_files(tv_path)
 
     head_start = 1
