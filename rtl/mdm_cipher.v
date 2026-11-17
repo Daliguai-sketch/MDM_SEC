@@ -1,6 +1,8 @@
 // Confidentiality lane: 3GPP 128-EEA1/2/3 and EEA0 bypass.
 // Internal streaming data is 32 bits, MSB first. All byte counts are 16 bits.
-module mdm_cipher (
+module mdm_cipher #(
+    parameter integer AES_LOW_AREA=1
+) (
     input  wire         clk,
     input  wire         rst_n,
     input  wire         start,
@@ -57,7 +59,7 @@ module mdm_cipher (
     wire aes_start = active && !start && alg_q==2'd2 && aes_ready && issued<length_q &&
                      occupied_after_pop<4'd2;
     wire [127:0] aes_in = {count_q,bearer_q,dir_q,26'b0,aes_counter};
-    mdm_aes128 u_aes (
+    mdm_aes128 #(.AES_LOW_AREA(AES_LOW_AREA)) u_aes (
         .clk(clk), .rst_n(rst_n), .start(aes_start), .ready(aes_ready),
         .key(key_q), .block_in(aes_in), .busy(aes_busy), .done(aes_done), .block_out(aes_out)
     );

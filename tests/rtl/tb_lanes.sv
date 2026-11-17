@@ -1,5 +1,6 @@
 `timescale 1ns/1ps
-module tb_lanes;
+module tb_lanes #(parameter integer TEST_AES_LOW_AREA=1);
+    localparam integer AES_CYCLES = (TEST_AES_LOW_AREA==1) ? 50 : 5;
     reg clk=0,rst_n=0;
     always #5 clk=~clk;
     reg cstart=0,ivalid=0,oready=0,istart=0,mvalid=0;
@@ -8,11 +9,11 @@ module tb_lanes;
     wire [31:0] odata,mac;
     wire [15:0] obytes;
     localparam [127:0] KEY=128'hd3c5d592327fb11c4035c6680af8c6d1;
-    mdm_cipher c(.clk(clk),.rst_n(rst_n),.start(cstart),.alg(calg),.key(KEY),
+    mdm_cipher #(.AES_LOW_AREA(TEST_AES_LOW_AREA)) c(.clk(clk),.rst_n(rst_n),.start(cstart),.alg(calg),.key(KEY),
       .count(32'h398a59b4),.bearer(5'h15),.direction(1'b1),.length(16'd64),
       .in_valid(ivalid),.in_ready(iready),.in_data(32'b0),
       .out_valid(ovalid),.out_ready(oready),.out_data(odata),.out_bytes(obytes),.done(cdone));
-    mdm_integrity m(.clk(clk),.rst_n(rst_n),.start(istart),.alg(ialg),.key(KEY),
+    mdm_integrity #(.AES_LOW_AREA(TEST_AES_LOW_AREA)) m(.clk(clk),.rst_n(rst_n),.start(istart),.alg(ialg),.key(KEY),
       .count(32'h398a59b4),.bearer(5'h15),.direction(1'b1),.length(16'd64),
       .in_valid(mvalid),.in_ready(mready),.in_data(32'b0),.mac(mac),.done(mdone));
 
@@ -78,8 +79,8 @@ module tb_lanes;
           for(integer k=1;
               k<4;
               k=k+1)
-            if(aes_cycle[k]-aes_cycle[k-1]!=5)
-              $fatal(1,"AES lane block interval was not five clocks");
+            if(aes_cycle[k]-aes_cycle[k-1]!=AES_CYCLES)
+              $fatal(1,"AES lane block interval was not %0d clocks",AES_CYCLES);
         end
       end
     endtask
@@ -180,7 +181,7 @@ module tb_lanes;
           cipher_test(a,1);
           integrity_test(a);
       end
-      $display("PASS lane throughput, five-cycle AES block interval, and backpressure");
+      $display("PASS lane throughput, %0d-cycle AES block interval, and backpressure",AES_CYCLES);
       $finish;
     end
     initial begin #1000000;

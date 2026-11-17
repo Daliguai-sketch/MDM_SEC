@@ -1,6 +1,8 @@
 // Integrity lane: 128-EIA1, EIA2, EIA3 and EIA0. Input is MSB-first
 // 32-bit words, and all byte counts are 16 bits.
-module mdm_integrity (
+module mdm_integrity #(
+    parameter integer AES_LOW_AREA=1
+) (
     input  wire         clk,
     input  wire         rst_n,
     input  wire         start,
@@ -55,7 +57,7 @@ module mdm_integrity (
     wire aes_ready,aes_busy,aes_done;
     wire [127:0] aes_out;
     wire [127:0] aes_block_in = (state==AES_L_REQ) ? 128'b0 : aes_input;
-    mdm_aes128 u_aes (
+    mdm_aes128 #(.AES_LOW_AREA(AES_LOW_AREA)) u_aes (
         .clk(clk), .rst_n(rst_n), .start(aes_start), .ready(aes_ready),
         .key(key_q), .block_in(aes_block_in), .busy(aes_busy), .done(aes_done), .block_out(aes_out)
     );

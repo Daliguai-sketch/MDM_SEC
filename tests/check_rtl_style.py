@@ -63,10 +63,10 @@ def main():
             if len(positions) > 1:
                 errors.append(f"{path.relative_to(ROOT)}:{line_no}: {len(positions)} code semicolons")
 
-    # All six controller/primitive FSMs use explicit, ordered sections.
+    # Each controller/primitive FSM uses explicit, ordered sections.
     # The state-register section must clock only state; the next-state
     # section must assign only next_state. Datapath registers are separate.
-    fsm_names = ("mdm_aes128", "mdm_snow3g", "mdm_zuc", "mdm_cipher", "mdm_integrity", "mdm_sec")
+    fsm_names = ("mdm_aes128_serial", "mdm_aes128_fast", "mdm_snow3g", "mdm_zuc", "mdm_cipher", "mdm_integrity", "mdm_sec")
     markers = ("FSM section 1:", "FSM section 2:", "FSM section 3:")
     for name in fsm_names:
         path = rtl / f"{name}.v"

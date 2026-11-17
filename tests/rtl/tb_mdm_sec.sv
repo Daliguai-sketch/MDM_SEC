@@ -1,5 +1,8 @@
 `timescale 1ns/1ps
-module tb_mdm_sec #(parameter integer TEST_MAX_BYTES=2048);
+module tb_mdm_sec #(
+    parameter integer TEST_MAX_BYTES=2048,
+    parameter integer TEST_AES_LOW_AREA=1
+);
     reg clk=0,rst_n=0;
     always #5 clk=~clk;
     reg cmd_valid=0,in_valid=0,rsp_ready=0,cipher_ready=0;
@@ -17,16 +20,17 @@ module tb_mdm_sec #(parameter integer TEST_MAX_BYTES=2048);
     wire [127:0] cipher_data;
     wire [15:0] rsp_cipher_bytes;
     wire [15:0] cipher_keep;
-    mdm_sec #(.MAX_BYTES(TEST_MAX_BYTES)) dut(.*);
+    mdm_sec #(.MAX_BYTES(TEST_MAX_BYTES),.AES_LOW_AREA(TEST_AES_LOW_AREA)) dut(.*);
 
     integer cycle_count=0,enc_started_at=-1,int_started_at=-1,enc_done_at=-1,int_done_at=-1;
     integer enc_start_count=0,int_start_count=0,rx_captured_at=-1,aes_issued_count=0;
     integer produced_bytes=0,overlap_cycles=0,enc_before_int_done=0,int_before_enc_done=0;
-    integer wait_for_mac=0,wait_for_result=0;
+    integer wait_for_mac=0,wait_for_result=0,wait_for_original=0,same_edge_original=0;
     integer overlap_cases [2:5];
     integer dependency_cases [2:5];
+    integer original_wait_cases [2:5],original_same_edge_cases [2:5];
     reg [11:0] overlap_pair_mask [2:5];
-    integer check_n,check_end,check_needed;
+    integer check_n,check_end,check_needed,check_old_end,check_read_end;
     always @(posedge clk) begin
         cycle_count=cycle_count+1;
         if (rst_n) begin
@@ -39,6 +43,8 @@ module tb_mdm_sec #(parameter integer TEST_MAX_BYTES=2048);
                 int_before_enc_done=0;
                 wait_for_mac=0;
                 wait_for_result=0;
+                wait_for_original=0;
+                same_edge_original=0;
             end
             if (dut.int_start) begin
                 int_started_at=cycle_count;
@@ -51,8 +57,11 @@ module tb_mdm_sec #(parameter integer TEST_MAX_BYTES=2048);
             // Count actual opportunities blocked by the producer, not just
             // cycles when the consuming algorithm is still initializing.
             if(dut.mode_q==3'd2 && dut.enc_started && !dut.enc_finished &&
-               dut.enc_pos<dut.enc_len && dut.enc_in_ready && !dut.enc_dep_ready)
+               dut.enc_pos<dut.enc_len && dut.enc_in_ready && !dut.enc_mac_ready)
                 wait_for_mac=wait_for_mac+1;
+            if((dut.mode_q==3'd2 || dut.mode_q==3'd4) && dut.enc_started &&
+               dut.enc_pos<dut.b_len && dut.enc_in_ready && !dut.enc_mem_ready)
+                wait_for_original=wait_for_original+1;
             if((dut.mode_q==3'd3 || dut.mode_q==3'd5) && dut.int_started && !dut.int_finished &&
                dut.int_pos<dut.int_len && dut.int_in_ready && !dut.int_dep_ready)
                 wait_for_result=wait_for_result+1;
@@ -67,21 +76,36 @@ module tb_mdm_sec #(parameter integer TEST_MAX_BYTES=2048);
                 if(check_needed>produced_bytes)
                     $fatal(1,"integrity read uncommitted result bytes: needed=%0d produced=%0d",check_needed,produced_bytes);
             end
-            if((dut.enc_in_valid && dut.enc_in_ready) != dut.u_result_buffer.wr_en)
-                $fatal(1,"cipher input transfer and result-buffer write differ");
-            if (dut.u_result_buffer.wr_en) begin
-                if(int'(dut.u_result_buffer.wr_addr)!=produced_bytes ||
-                   dut.u_result_buffer.wr_bytes==0 || dut.u_result_buffer.wr_bytes>4 ||
-                   produced_bytes+int'(dut.u_result_buffer.wr_bytes)>int'(dut.enc_len))
-                    $fatal(1,"noncontiguous or invalid cipher-result write");
-                if(dut.mode_q==3'd2 && produced_bytes+int'(dut.u_result_buffer.wr_bytes)>int'(dut.b_len) && !dut.int_finished)
+            if((dut.enc_in_valid && dut.enc_in_ready) != dut.result_wr_en)
+                $fatal(1,"cipher input transfer and in-place write differ");
+            if (dut.result_wr_en) begin
+                if(dut.u_input_buffer.wr_addr!==16'(int'(dut.a_len)+produced_bytes) ||
+                   dut.u_input_buffer.wr_bytes==0 || dut.u_input_buffer.wr_bytes>4 ||
+                   produced_bytes+int'(dut.u_input_buffer.wr_bytes)>int'(dut.enc_len))
+                    $fatal(1,"noncontiguous or invalid in-place cipher write");
+                if(dut.mode_q==3'd2 && produced_bytes+int'(dut.u_input_buffer.wr_bytes)>int'(dut.b_len) && !dut.int_finished)
                     $fatal(1,"mode 2 encrypted MAC bytes before integrity completion");
-                produced_bytes=produced_bytes+int'(dut.u_result_buffer.wr_bytes);
+                // Independently verify that modes 2/4 never overwrite a B byte
+                // before integrity has consumed the original, allowing a
+                // same-edge read-before-write transfer.
+                if((dut.mode_q==3'd2 || dut.mode_q==3'd4) && dut.int_alg_q!=0 &&
+                   produced_bytes<int'(dut.b_len) && !dut.int_finished) begin
+                    check_old_end=produced_bytes+int'(dut.u_input_buffer.wr_bytes);
+                    if(check_old_end>int'(dut.b_len)) check_old_end=int'(dut.b_len);
+                    check_read_end=int'(dut.int_pos);
+                    if(dut.int_in_valid && dut.int_in_ready)
+                        check_read_end=check_read_end+int'(dut.int_chunk);
+                    if(int'(dut.a_len)+check_old_end>check_read_end)
+                        $fatal(1,"mode %0d overwrote original before integrity read",dut.mode_q);
+                    if(int'(dut.a_len)+check_old_end>int'(dut.int_pos))
+                        same_edge_original=same_edge_original+1;
+                end
+                produced_bytes=produced_bytes+int'(dut.u_input_buffer.wr_bytes);
                 if(!dut.int_finished) enc_before_int_done=enc_before_int_done+1;
             end
             if(dut.int_in_valid && dut.int_in_ready && !dut.enc_finished)
                 int_before_enc_done=int_before_enc_done+1;
-            if(dut.u_result_buffer.wr_en && dut.int_in_valid && dut.int_in_ready)
+            if(dut.result_wr_en && dut.int_in_valid && dut.int_in_ready)
                 overlap_cycles=overlap_cycles+1;
         end
     end
@@ -176,7 +200,7 @@ module tb_mdm_sec #(parameter integer TEST_MAX_BYTES=2048);
             end
             in_valid=0;
             cycles=0;
-            while(!(dut.u_result_buffer.wr_en && dut.int_in_valid && dut.int_in_ready)) begin
+            while(!(dut.result_wr_en && dut.int_in_valid && dut.int_in_ready)) begin
                 @(negedge clk);
                 cycles=cycles+1;
                 if(cycles>2000) $fatal(1,"mode %0d parallel reset setup timed out",m);
@@ -207,6 +231,8 @@ module tb_mdm_sec #(parameter integer TEST_MAX_BYTES=2048);
             i=i+1) begin
             overlap_cases[i]=0;
             dependency_cases[i]=0;
+            original_wait_cases[i]=0;
+            original_same_edge_cases[i]=0;
             overlap_pair_mask[i]=0;
         end
         #1;
@@ -413,12 +439,14 @@ module tb_mdm_sec #(parameter integer TEST_MAX_BYTES=2048);
                 (mode==5 && alen==3 && blen==1021))) begin
                 if(overlap_cycles==0)
                     $fatal(1,"case %0d mode %0d alg %0d/%0d has no simultaneous transfers",id,mode,ca,ia);
-                if(mode==2 && (enc_before_int_done==0 || wait_for_mac==0))
-                    $fatal(1,"case %0d mode 2 did not both overlap and wait for the MAC",id);
+                if(mode==2 && enc_before_int_done==0)
+                    $fatal(1,"case %0d mode 2 did not encrypt before integrity completed",id);
                 if((mode==3 || mode==5) && int_before_enc_done==0)
                     $fatal(1,"case %0d mode %0d did not authenticate before cipher completion",id,mode);
                 overlap_cases[mode]=overlap_cases[mode]+1;
                 overlap_pair_mask[mode][ca*3+ia-1]=1'b1;
+                if(wait_for_original!=0) original_wait_cases[mode]=original_wait_cases[mode]+1;
+                if(same_edge_original!=0) original_same_edge_cases[mode]=original_same_edge_cases[mode]+1;
                 if((mode==2 && wait_for_mac!=0) ||
                    ((mode==3 || mode==5) && wait_for_result!=0))
                     dependency_cases[mode]=dependency_cases[mode]+1;
@@ -481,9 +509,14 @@ module tb_mdm_sec #(parameter integer TEST_MAX_BYTES=2048);
             if(dependency_cases[2]==0 || dependency_cases[3]==0 || dependency_cases[5]==0)
                 $fatal(1,"dependency wait coverage incomplete: %0d/%0d/%0d",
                        dependency_cases[2],dependency_cases[3],dependency_cases[5]);
+            if(original_wait_cases[2]==0 || original_wait_cases[4]==0 ||
+               original_same_edge_cases[2]==0 || original_same_edge_cases[4]==0)
+                $fatal(1,"in-place original read-before-write coverage incomplete");
             $display("PASS simultaneous transfers by mode 2/3/4/5: %0d/%0d/%0d/%0d; dependency waits 2/3/5: %0d/%0d/%0d",
                      overlap_cases[2],overlap_cases[3],overlap_cases[4],overlap_cases[5],
                      dependency_cases[2],dependency_cases[3],dependency_cases[5]);
+            $display("PASS in-place protection waits (2/4): %0d/%0d; same-edge original reads (2/4): %0d/%0d",
+                     original_wait_cases[2],original_wait_cases[4],original_same_edge_cases[2],original_same_edge_cases[4]);
         end
         // Also abort a held output. Stale RAM contents must not be exposed
         // on the external data bus after reset while cipher_valid is low.

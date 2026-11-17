@@ -18,6 +18,14 @@ module mdm_packet_buffer #(
 );
     localparam integer DEPTH = (CAP_BYTES+15)/16;
     localparam integer AW = (DEPTH<=1) ? 1 : $clog2(DEPTH);
+    generate
+        if (CAP_BYTES<1 || CAP_BYTES>65536 || (READ_PORTS!=1 && READ_PORTS!=2)) begin: g_invalid_parameters
+            initial begin
+                $display("ERROR: CAP_BYTES must be 1..65536 and READ_PORTS must be 1 or 2");
+                $finish;
+            end
+        end
+    endgenerate
 
     // Shared four-stage byte barrel rotators avoid sixteen independent
     // 16-to-1 crossbars on each 128-bit memory port.
@@ -55,18 +63,26 @@ module mdm_packet_buffer #(
             localparam [3:0] BANK = b[3:0];
             reg [7:0] mem [0:DEPTH-1];
             wire [3:0] wo = BANK-wr_addr[3:0];
-            wire [3:0] ro0 = BANK-rd0_addr[3:0];
-            wire [3:0] ro1 = BANK-rd1_addr[3:0];
-            wire [15:0] wbyte = wr_addr+{12'b0,wo};
-            wire [15:0] rbyte0 = rd0_addr+{12'b0,ro0};
-            wire [15:0] rbyte1 = rd1_addr+{12'b0,ro1};
+            // The bank wraps into the next row exactly when BANK < offset.
+            // Add only this carry to the row index, rather than computing a
+            // full 16-bit byte address for each bank and each read port.
+            wire [AW-1:0] wrow,rrow0,rrow1;
+            if (b==15) begin: g_last_bank
+                assign wrow = wr_addr[AW+3:4];
+                assign rrow0 = rd0_addr[AW+3:4];
+                assign rrow1 = rd1_addr[AW+3:4];
+            end else begin: g_bank_carry
+                assign wrow = wr_addr[AW+3:4] + {{(AW-1){1'b0}},(BANK<wr_addr[3:0])};
+                assign rrow0 = rd0_addr[AW+3:4] + {{(AW-1){1'b0}},(BANK<rd0_addr[3:0])};
+                assign rrow1 = rd1_addr[AW+3:4] + {{(AW-1){1'b0}},(BANK<rd1_addr[3:0])};
+            end
             always @(posedge clk) begin
                 if (wr_en && {12'b0,wo}<wr_bytes)
-                    mem[wbyte[AW+3:4]] <= write_banks[127-8*b -: 8];
+                    mem[wrow] <= write_banks[127-8*b -: 8];
             end
-            assign read_banks0[127-8*b -: 8] = mem[rbyte0[AW+3:4]];
+            assign read_banks0[127-8*b -: 8] = mem[rrow0];
             if (READ_PORTS==2) begin: g_second_read
-                assign read_banks1[127-8*b -: 8] = mem[rbyte1[AW+3:4]];
+                assign read_banks1[127-8*b -: 8] = mem[rrow1];
             end else begin: g_no_second_read
                 assign read_banks1[127-8*b -: 8] = 8'b0;
             end

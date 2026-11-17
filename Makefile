@@ -4,19 +4,26 @@ YOSYS ?= $(shell command -v yosys 2>/dev/null || command -v yowasp-yosys 2>/dev/
 BUILD_DIR ?= build/rtl
 JOBS ?= 2
 CHECK_MAX_BYTES ?= 2048
+CHECK_AES_LOW_AREA ?= 1
 SYNTH_MAX_BYTES ?= 16
+SYNTH_AES_LOW_AREA ?= 1
+BUFFER_CAP_BYTES ?= 2052
+BUFFER_READ_PORTS ?= 2
+AREA_BASE_REF ?= 711947b1c08a16688d1521be45426868f4fd03e9
 # Some PyPI verilator-cli wheels omit the compiler's PCH include flag. Native
 # Verilator installations use their own settings; override VMAKEFLAGS if needed.
 VMAKEFLAGS ?= $(if $(findstring verilator-cli,$(notdir $(VERILATOR))),CFG_CXXFLAGS_PCH_I=-include,)
 
-RTL := rtl/mdm_aes128.v rtl/mdm_snow3g.v rtl/mdm_zuc.v \
-       rtl/mdm_packet_buffer.v rtl/mdm_cipher.v rtl/mdm_integrity.v rtl/mdm_sec.v
+AES_RTL := rtl/mdm_aes_sbox.v rtl/mdm_aes_blocks.v rtl/mdm_aes128_serial.v \
+           rtl/mdm_aes128_fast.v rtl/mdm_aes128.v
+RTL := $(AES_RTL) rtl/mdm_snow3g.v rtl/mdm_zuc.v rtl/mdm_packet_buffer.v \
+       rtl/mdm_cipher.v rtl/mdm_integrity.v rtl/mdm_sec.v
 HEADERS := rtl/mdm_sboxes.vh rtl/mdm_aes_sbox.vh
 
-.PHONY: all test example lint test-style test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries yosys-check yosys-parameters synth-generic clean
+.PHONY: all test example lint test-style test-aes test-fast test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
 all: test
 
-test: lint test-style example test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries
+test: lint test-style example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast
 
 test-style:
 	$(PYTHON) tests/check_rtl_style.py
@@ -33,6 +40,25 @@ example: $(BUILD_DIR)/tb_quickstart/Vtb_mdm_sec_quickstart
 lint:
 	@test -n "$(VERILATOR)" || { echo 'Install Verilator (or set VERILATOR=...)'; exit 1; }
 	$(VERILATOR) --language 1364-2005 --lint-only -Irtl --top-module mdm_sec $(RTL)
+	$(VERILATOR) --language 1364-2005 --lint-only -Irtl --top-module mdm_sec -GAES_LOW_AREA=0 $(RTL)
+
+$(BUILD_DIR)/aes_vectors.txt: tests/gen_aes_vectors.py tests/reference_model.py sec_core/aes/sec_aes_core_enc.py
+	@mkdir -p $(@D)
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/gen_aes_vectors.py $@
+
+$(BUILD_DIR)/tb_aes_small/Vtb_aes_random: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_aes_random --Mdir $(abspath $(@D)) $(AES_RTL) tests/rtl/tb_aes_random.sv
+
+$(BUILD_DIR)/tb_aes_fast/Vtb_aes_random: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_aes_random -GTEST_AES_LOW_AREA=0 --Mdir $(abspath $(@D)) $(AES_RTL) tests/rtl/tb_aes_random.sv
+
+test-aes: $(BUILD_DIR)/aes_vectors.txt $(BUILD_DIR)/tb_aes_small/Vtb_aes_random $(BUILD_DIR)/tb_aes_fast/Vtb_aes_random
+	$(BUILD_DIR)/tb_aes_small/Vtb_aes_random +VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)
+	$(BUILD_DIR)/tb_aes_fast/Vtb_aes_random +VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)
 
 $(BUILD_DIR)/tb_primitives/Vtb_primitives: $(RTL) $(HEADERS) tests/rtl/tb_primitives.sv
 	@mkdir -p $(@D)
@@ -55,8 +81,27 @@ $(BUILD_DIR)/tb_packet_buffer/Vtb_packet_buffer: rtl/mdm_packet_buffer.v tests/r
 	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
 		--top-module tb_packet_buffer --Mdir $(abspath $(@D)) rtl/mdm_packet_buffer.v tests/rtl/tb_packet_buffer.sv
 
-test-buffer: $(BUILD_DIR)/tb_packet_buffer/Vtb_packet_buffer
-	$<
+$(BUILD_DIR)/tb_buffer_min/Vtb_packet_buffer: rtl/mdm_packet_buffer.v tests/rtl/tb_packet_buffer.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_packet_buffer -GTEST_CAP=1 -GTEST_READ_PORTS=2 --Mdir $(abspath $(@D)) $^
+
+$(BUILD_DIR)/tb_buffer_one_read/Vtb_packet_buffer: rtl/mdm_packet_buffer.v tests/rtl/tb_packet_buffer.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_packet_buffer -GTEST_CAP=64 -GTEST_READ_PORTS=1 --Mdir $(abspath $(@D)) $^
+
+$(BUILD_DIR)/tb_buffer_full/Vtb_packet_buffer: rtl/mdm_packet_buffer.v tests/rtl/tb_packet_buffer.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_packet_buffer -GTEST_CAP=65536 -GTEST_READ_PORTS=2 --Mdir $(abspath $(@D)) $^
+
+test-buffer: $(BUILD_DIR)/tb_packet_buffer/Vtb_packet_buffer $(BUILD_DIR)/tb_buffer_min/Vtb_packet_buffer \
+             $(BUILD_DIR)/tb_buffer_one_read/Vtb_packet_buffer $(BUILD_DIR)/tb_buffer_full/Vtb_packet_buffer
+	$(BUILD_DIR)/tb_packet_buffer/Vtb_packet_buffer
+	$(BUILD_DIR)/tb_buffer_min/Vtb_packet_buffer
+	$(BUILD_DIR)/tb_buffer_one_read/Vtb_packet_buffer
+	$(BUILD_DIR)/tb_buffer_full/Vtb_packet_buffer
 
 $(BUILD_DIR)/packet_vectors.txt: tests/gen_vectors.py tests/reference_model.py \
        sec_core/aes/sec_aes_core_enc.py sec_core/snow3g/sec_snow3g_core.py sec_core/zuc/sec_zuc_core.py
@@ -97,13 +142,42 @@ $(BUILD_DIR)/tb_boundaries/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.s
 test-boundaries: $(BUILD_DIR)/boundary_vectors.txt $(BUILD_DIR)/tb_boundaries/Vtb_mdm_sec
 	$(BUILD_DIR)/tb_boundaries/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/boundary_vectors.txt)
 
+$(BUILD_DIR)/tb_primitives_fast/Vtb_primitives: $(RTL) $(HEADERS) tests/rtl/tb_primitives.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_primitives -GTEST_AES_LOW_AREA=0 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_primitives.sv
+
+$(BUILD_DIR)/tb_lanes_fast/Vtb_lanes: $(RTL) $(HEADERS) tests/rtl/tb_lanes.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_lanes -GTEST_AES_LOW_AREA=0 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_lanes.sv
+
+$(BUILD_DIR)/tb_packet_fast/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_mdm_sec -GTEST_AES_LOW_AREA=0 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_mdm_sec.sv
+
+$(BUILD_DIR)/tb_boundaries_fast/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_mdm_sec -GTEST_AES_LOW_AREA=0 -GTEST_MAX_BYTES=65535 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_mdm_sec.sv
+
+# Check that selecting the legacy five-cycle AES propagates through both lanes
+# and the top level, including all six packet modes and maximum-size wrap.
+test-fast: $(BUILD_DIR)/packet_vectors.txt $(BUILD_DIR)/boundary_vectors.txt $(BUILD_DIR)/tb_primitives_fast/Vtb_primitives \
+           $(BUILD_DIR)/tb_lanes_fast/Vtb_lanes $(BUILD_DIR)/tb_packet_fast/Vtb_mdm_sec $(BUILD_DIR)/tb_boundaries_fast/Vtb_mdm_sec
+	$(BUILD_DIR)/tb_primitives_fast/Vtb_primitives +SBOX=$(abspath tests/rtl/aes_sbox.hex)
+	$(BUILD_DIR)/tb_lanes_fast/Vtb_lanes
+	$(BUILD_DIR)/tb_packet_fast/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/packet_vectors.txt) +REQUIRE_PARALLEL_COVERAGE
+	$(BUILD_DIR)/tb_boundaries_fast/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/boundary_vectors.txt)
+
 yosys-check:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	@mkdir -p $(BUILD_DIR)
-	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES $(CHECK_MAX_BYTES); proc; opt; check -assert; stat' > $(BUILD_DIR)/yosys-check.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES $(CHECK_MAX_BYTES) -chparam AES_LOW_AREA $(CHECK_AES_LOW_AREA); proc; opt; check -assert; stat' > $(BUILD_DIR)/yosys-check.log
 	@tail -55 $(BUILD_DIR)/yosys-check.log
 
-# Invalid MAX_BYTES must fail specifically at the elaboration guard.
+# Invalid parameters must fail specifically at the elaboration guards.
 yosys-parameters:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	@mkdir -p $(BUILD_DIR)
@@ -113,15 +187,47 @@ yosys-parameters:
 		fi; \
 		grep -q 'ERROR: System task' $(BUILD_DIR)/invalid-$$value.log || { cat $(BUILD_DIR)/invalid-$$value.log; exit 1; }; \
 	done
-	@echo 'PASS invalid MAX_BYTES parameters rejected by elaboration guard'
+	@for value in 2 3; do \
+		if $(YOSYS) -Q -T -p "read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam AES_LOW_AREA $$value" > $(BUILD_DIR)/invalid-aes-$$value.log 2>&1; then \
+			echo "FAIL: AES_LOW_AREA=$$value was accepted"; exit 1; \
+		fi; \
+		grep -q 'ERROR: System task' $(BUILD_DIR)/invalid-aes-$$value.log || { cat $(BUILD_DIR)/invalid-aes-$$value.log; exit 1; }; \
+	done
+	@for parameters in 'CAP_BYTES 0' 'CAP_BYTES 65537' 'READ_PORTS 0' 'READ_PORTS 3'; do \
+		set -- $$parameters; \
+		if $(YOSYS) -Q -T -p "read_verilog rtl/mdm_packet_buffer.v; hierarchy -check -top mdm_packet_buffer -chparam $$1 $$2" > $(BUILD_DIR)/invalid-buffer-$$1-$$2.log 2>&1; then \
+			echo "FAIL: $$parameters was accepted"; exit 1; \
+		fi; \
+		grep -q 'ERROR: System task' $(BUILD_DIR)/invalid-buffer-$$1-$$2.log || { cat $(BUILD_DIR)/invalid-buffer-$$1-$$2.log; exit 1; }; \
+	done
+	@echo 'PASS invalid MAX_BYTES, AES_LOW_AREA and packet-buffer parameters rejected by elaboration guards'
 
 # Generic pre-technology mapping sanity check, NOT physical area/timing.
 # This maps memories to flip-flops; use target SRAMs for real implementation.
 synth-generic:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	@mkdir -p $(BUILD_DIR)
-	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES $(SYNTH_MAX_BYTES); synth -top mdm_sec -noabc; check -assert; stat' > $(BUILD_DIR)/synth-generic.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES $(SYNTH_MAX_BYTES) -chparam AES_LOW_AREA $(SYNTH_AES_LOW_AREA); synth -top mdm_sec -noabc; check -assert; stat' > $(BUILD_DIR)/synth-generic.log
 	@tail -65 $(BUILD_DIR)/synth-generic.log
+
+# Standalone hierarchical reports; each generic cell counts as one regardless
+# of technology and no ABC/physical mapping or timing analysis is performed.
+synth-aes:
+	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
+	@mkdir -p $(BUILD_DIR)
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(AES_RTL); hierarchy -check -top mdm_aes128 -chparam AES_LOW_AREA $(SYNTH_AES_LOW_AREA); synth -top mdm_aes128 -noabc; check -assert; stat' > $(BUILD_DIR)/synth-aes-$(SYNTH_AES_LOW_AREA).log
+	@tail -85 $(BUILD_DIR)/synth-aes-$(SYNTH_AES_LOW_AREA).log
+
+synth-buffer:
+	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
+	@mkdir -p $(BUILD_DIR)
+	$(YOSYS) -Q -T -p 'read_verilog rtl/mdm_packet_buffer.v; hierarchy -check -top mdm_packet_buffer -chparam CAP_BYTES $(BUFFER_CAP_BYTES) -chparam READ_PORTS $(BUFFER_READ_PORTS); synth -top mdm_packet_buffer -noabc; check -assert; stat' > $(BUILD_DIR)/synth-buffer-$(BUFFER_CAP_BYTES)-$(BUFFER_READ_PORTS).log
+	@tail -30 $(BUILD_DIR)/synth-buffer-$(BUFFER_CAP_BYTES)-$(BUFFER_READ_PORTS).log
+
+# Extract the pre-optimization RTL from Git and reproduce the paired comparison.
+area-compare:
+	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
+	$(PYTHON) tests/compare_generic_area.py --yosys "$(YOSYS)" --baseline "$(AREA_BASE_REF)" --output "$(BUILD_DIR)/area-compare"
 
 clean:
 	rm -rf $(BUILD_DIR)

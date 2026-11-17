@@ -45,7 +45,7 @@ verilator --language 1364-2005 --lint-only --top-module mdm_sec -f rtl/files.f
 下面是命名端口例化模板；同名信号需要在上层按相应位宽声明，并由上层驱动输入、接收输出。完整可运行的连线及驱动见上述示例文件。
 
 ```verilog
-mdm_sec #(.MAX_BYTES(2048)) u_mdm_sec (
+mdm_sec #(.MAX_BYTES(2048), .AES_LOW_AREA(1)) u_mdm_sec (
     .clk(clk), .rst_n(rst_n),
     .cmd_valid(cmd_valid), .cmd_ready(cmd_ready),
     .cmd_mode(cmd_mode), .cmd_cipher_alg(cmd_cipher_alg), .cmd_int_alg(cmd_int_alg),
@@ -80,7 +80,7 @@ mdm_sec #(.MAX_BYTES(2048)) u_mdm_sec (
 | `cipher_keep`, `cipher_last` | 输出 | 16 位有效字节掩码、末 beat 标志 |
 | `rsp_rx_mac`, `rsp_rx_mac_valid`, `rsp_mac_match` | 输出 | 模式 5 的接收验证码（32 位）、有效及比较结果 |
 
-`MAX_BYTES` 限制输入 `A+B` 的总字节数，默认 2048，合法范围为 1–65535。128 位密钥按高字节在前填写，通信两端需使用匹配的密钥和协议参数。`cmd_direction` 是协议中的 DIRECTION 位，不是加密/解密选择信号。EEA 算法的 XOR 变换用于加密和解密。
+`MAX_BYTES` 限制输入 `A+B` 的总字节数，默认 2048，合法范围为 1–65535。`AES_LOW_AREA=1` 是默认低面积 AES，单块延迟/启动间隔 50 拍；改为 0 可选旧的 5 拍 AES，两个通道都使用所选配置。原地缓冲可能带来额外等待，因此即使选择高速 AES，整包时序也不一定与旧版相同。128 位密钥按高字节在前填写，通信两端需使用匹配的密钥和协议参数。`cmd_direction` 是协议中的 DIRECTION 位，不是加密/解密选择信号。EEA 算法的 XOR 变换用于加密和解密。
 
 ## 3. 选择模式与算法
 
@@ -104,7 +104,7 @@ mdm_sec #(.MAX_BYTES(2048)) u_mdm_sec (
 | 2 | AES-128 CTR / EEA2 | AES-128 CMAC / EIA2，取高 32 位 |
 | 3 | ZUC / EEA3 | ZUC / EIA3 |
 
-模式 2–5 的两条通道在装载完整包之后同拍启动，允许实际处理重叠；模式 2、3、5 存在数据依赖，会在需要 MAC、密文或明文时等待，不保证每拍同时推进。
+模式 2–5 的两条通道在装载完整包之后同拍启动，允许实际处理重叠；模式 2/4 会保护尚未认证的原文，模式 2/3/5 还会等待所需 MAC、密文或明文，不保证每拍同时推进。
 
 ## 4. 一个包的握手顺序
 
@@ -132,6 +132,6 @@ mdm_sec #(.MAX_BYTES(2048)) u_mdm_sec (
 - 模式 5 验证不匹配时 `rsp_error` 仍为 0，模块仍会输出解密数据；必须检查 `rsp_mac_match` 并丢弃未认证明文，同时排空输出或复位中止。EIA0 不提供安全认证。
 - 模式 2 输出长度为 `B+4`，模式 5 为 `B-4`；模式 1 也会输出原样 B。其他模式输出长度为 B。
 - 接口仅支持整字节消息。顶层输入/输出为 128 位，内部算法通道为 32 位；处理延迟包含装载、初始化、运算和握手。
-- 内部缓存使用异步读；若目标 SRAM 只支持同步读，需适配并增加流水级。复位不擦除缓存内容，生产系统需另行考虑密钥/数据清除与安全防护。
+- 输入及结果使用同一份缓存，采用两个异步读口；同地址读写时在写沿必须先采样旧数据。若目标 SRAM 只支持同步读或读写冲突语义不同，需重新设计调度并验证。复位不擦除缓存内容，生产系统需另行考虑密钥/数据清除与安全防护。
 
-更完整的协议、时序和限制见 [`rtl_interface.md`](rtl_interface.md)，回归记录见 [`verification.md`](verification.md)。
+更完整的协议、时序和限制见 [`rtl_interface.md`](rtl_interface.md)，面积比较及缓存用途见 [`area_optimization.md`](area_optimization.md)，回归记录见 [`verification.md`](verification.md)。

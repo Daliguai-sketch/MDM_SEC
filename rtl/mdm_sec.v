@@ -1,7 +1,8 @@
 // Packet-level modem security block with 128-bit data ports.
 // See docs/rtl_interface.md for the segmented input and output protocol.
 module mdm_sec #(
-    parameter integer MAX_BYTES = 2048
+    parameter integer MAX_BYTES = 2048,
+    parameter integer AES_LOW_AREA = 1
 ) (
     input  wire         clk,
     input  wire         rst_n,
@@ -46,7 +47,10 @@ module mdm_sec #(
     endgenerate
     localparam [2:0] IDLE=0, LOAD_A=1, LOAD_B=2, RUN=3, RESPONSE=4, OUTPUT=5;
     localparam [15:0] MAX_BYTES_16 = MAX_BYTES[15:0];
-    localparam integer RESULT_CAP = (MAX_BYTES>65531) ? 65535 : MAX_BYTES+4;
+    // One buffer holds A, B and (for mode 2) up to four appended MAC bytes.
+    // At the 16-bit address limit the append wraps into A only after A has
+    // been authenticated; a full 65536-byte ring makes that wrap explicit.
+    localparam integer BUFFER_CAP = (MAX_BYTES>65532) ? 65536 : MAX_BYTES+4;
     reg [2:0] state, next_state;
     reg [2:0] mode_q;
     reg [1:0] enc_alg_q,int_alg_q;
@@ -93,47 +97,58 @@ module mdm_sec #(
     wire [15:0] enc_left = (enc_pos<enc_len) ? enc_len-enc_pos : 16'b0;
     wire [15:0] enc_b_left = (enc_pos<b_len) ? b_len-enc_pos : 16'b0;
     wire [15:0] int_left = (int_pos<int_len) ? int_len-int_pos : 16'b0;
-    wire [15:0] int_a_left = (int_pos<a_len) ? a_len-int_pos : 16'b0;
     wire [15:0] enc_chunk = (enc_left>=16'd4) ? 16'd4 : enc_left;
     wire [15:0] int_chunk = (int_left>=16'd4) ? 16'd4 : int_left;
     wire [15:0] int_end = int_pos+int_chunk;
     wire [15:0] result_needed = (int_end>a_len) ? int_end-a_len : 16'b0;
-    // Mode 2 can encrypt full B words immediately, but a word containing
-    // any appended MAC bytes must wait until the integrity result is saved.
-    wire enc_dep_ready = (mode_q!=3'd2) || (enc_chunk<=enc_b_left) || int_finished;
-    // Modes 3/5 can consume A-only words without waiting for cipher data.
-    // enc_pos counts prior committed bytes, never a same-edge buffer write.
-    wire int_dep_ready = !int_after_cipher || (enc_pos>=result_needed);
-    wire enc_in_valid = (state==RUN) && enc_started && !enc_finished &&
-                        (enc_pos<enc_len) && enc_dep_ready;
-    wire int_in_valid = (state==RUN) && int_started && !int_finished &&
-                        (int_alg_q!=2'd0) && (int_pos<int_len) && int_dep_ready;
     wire enc_in_ready,int_in_ready,enc_out_valid,enc_done,int_done;
     wire [31:0] enc_out,calculated_mac;
     wire [15:0] enc_out_bytes;
-    // The cipher output is always ready, so every valid output is committed.
+    // Modes 3/5 consume produced bytes only on a later edge. This prevents
+    // integrity from reading ciphertext/plaintext before it is written.
+    wire int_dep_ready = !int_after_cipher || (enc_pos>=result_needed);
+    wire int_in_valid = (state==RUN) && int_started && !int_finished &&
+                        (int_alg_q!=2'd0) && (int_pos<int_len) && int_dep_ready;
+    wire int_take = int_in_valid && int_in_ready;
+
+    // In modes 2/4 integrity needs original B, whereas cipher overwrites B
+    // in place. Allow a write only after all its original B bytes have been
+    // read by integrity, including an integrity transfer on this same edge.
+    // RAM reads are asynchronous and the consuming registers sample old data
+    // at that edge, before the nonblocking memory write becomes visible.
+    wire [15:0] enc_end = enc_pos+enc_chunk;
+    wire [15:0] old_b_end = (enc_end<b_len) ? enc_end : b_len;
+    wire [15:0] old_input_end = a_len+old_b_end;
+    wire [15:0] int_read_end = int_take ? int_end : int_pos;
+    wire enc_mem_ready = (mode_q!=3'd2 && mode_q!=3'd4) ||
+                         (enc_pos>=b_len) || (int_alg_q==2'd0) ||
+                         int_finished || (old_input_end<=int_read_end);
+    // A mode-2 word containing any appended MAC bytes waits for the MAC.
+    wire enc_mac_ready = (mode_q!=3'd2) || (enc_chunk<=enc_b_left) || int_finished;
+    wire enc_dep_ready = enc_mem_ready && enc_mac_ready;
+    wire enc_in_valid = (state==RUN) && enc_started && !enc_finished &&
+                        (enc_pos<enc_len) && enc_dep_ready;
+
+    // Input is loaded first; in RUN each cipher result replaces its own B
+    // bytes. The interface never loads and computes on the same edge.
     wire result_wr_en = (state==RUN) && enc_out_valid;
+    wire [15:0] input_wr_addr = result_wr_en ? a_len+enc_pos : load_pos;
+    wire [15:0] input_wr_bytes = result_wr_en ? enc_out_bytes : load_n;
+    wire [127:0] input_wr_data = result_wr_en ? {enc_out,96'b0} : in_data;
     wire [15:0] input_rd0_addr = a_len+((state==OUTPUT) ? out_pos : enc_pos);
-    wire [15:0] result_int_base = (int_pos>=a_len) ? int_pos-a_len : 16'b0;
+    wire [127:0] input_rd0;
+    wire [31:0] input_rd1;
     // The trailing four decrypted bytes are collected as cipher words arrive.
     wire capture_rx_mac = (state==RUN) && (mode_q==3'd5) && enc_done;
-    wire [15:0] result_rd_addr = (state==OUTPUT) ? out_pos : result_int_base;
-    wire [127:0] input_rd0,result_rd;
-    wire [31:0] input_rd1,result_unused;
 
-    // 16-bank input buffer provides 128-bit load/output and two concurrent
-    // 32-bit lane reads. The result buffer has a single read port.
-    mdm_packet_buffer #(.CAP_BYTES(MAX_BYTES),.READ_PORTS(2)) u_input_buffer (
-        .clk(clk), .wr_en(in_valid && in_ready), .wr_addr(load_pos),
-        .wr_bytes(load_n), .wr_data(in_data),
+    // One 16-bank packet buffer replaces the previous input + result copies.
+    // Its two asynchronous reads feed cipher and integrity concurrently;
+    // rd0 supplies the 128-bit output once all processing is complete.
+    mdm_packet_buffer #(.CAP_BYTES(BUFFER_CAP),.READ_PORTS(2)) u_input_buffer (
+        .clk(clk), .wr_en((in_valid && in_ready) || result_wr_en), .wr_addr(input_wr_addr),
+        .wr_bytes(input_wr_bytes), .wr_data(input_wr_data),
         .rd0_addr(input_rd0_addr), .rd0_data(input_rd0),
         .rd1_addr(int_pos), .rd1_data(input_rd1)
-    );
-    mdm_packet_buffer #(.CAP_BYTES(RESULT_CAP),.READ_PORTS(1)) u_result_buffer (
-        .clk(clk), .wr_en(result_wr_en), .wr_addr(enc_pos),
-        .wr_bytes(enc_out_bytes), .wr_data({enc_out,96'b0}),
-        .rd0_addr(result_rd_addr), .rd0_data(result_rd),
-        .rd1_addr(16'b0), .rd1_data(result_unused)
     );
 
     function automatic [7:0] word_byte(input [31:0] word,input [1:0] index);
@@ -150,7 +165,6 @@ module mdm_sec #(
 
     // Two-bit offsets select within one 32-bit word; they are not lengths.
     wire [1:0] mac_offset = enc_pos[1:0]-b_len[1:0];
-    wire [1:0] result_offset = (int_pos<a_len) ? int_pos[1:0]-a_len[1:0] : 2'b0;
     reg [31:0] enc_in,int_in;
     integer k;
     always @* begin
@@ -166,33 +180,25 @@ module mdm_sec #(
                 else if (mode_q==3'd2)
                     enc_in[31-8*k -: 8] = word_byte(mac_q,mac_offset+k[1:0]);
             end
-            if (k<{16'b0,int_left}) begin
-                if (int_after_cipher && k>={16'b0,int_a_left})
-                    int_in[31-8*k -: 8] = word_byte(result_rd[127:96],result_offset+k[1:0]);
-                else
-                    int_in[31-8*k -: 8] = input_rd1[31-8*k -: 8];
-            end
+            if (k<{16'b0,int_left})
+                int_in[31-8*k -: 8] = input_rd1[31-8*k -: 8];
         end
         for (k=0;
              k<16;
              k=k+1) begin
-            if (state==OUTPUT && k<{16'b0,out_n}) begin
-                if (mode_q==3'd1)
-                    cipher_data[127-8*k -: 8] = input_rd0[127-8*k -: 8];
-                else
-                    cipher_data[127-8*k -: 8] = result_rd[127-8*k -: 8];
-            end
+            if (state==OUTPUT && k<{16'b0,out_n})
+                cipher_data[127-8*k -: 8] = input_rd0[127-8*k -: 8];
         end
     end
 
-    mdm_cipher u_cipher (
+    mdm_cipher #(.AES_LOW_AREA(AES_LOW_AREA)) u_cipher (
         .clk(clk), .rst_n(rst_n), .start(enc_start), .alg(enc_alg_q), .key(enc_key_q),
         .count(count_q), .bearer(bearer_q), .direction(direction_q), .length(enc_len),
         .in_valid(enc_in_valid), .in_ready(enc_in_ready), .in_data(enc_in),
         .out_valid(enc_out_valid), .out_ready(1'b1), .out_data(enc_out),
         .out_bytes(enc_out_bytes), .done(enc_done)
     );
-    mdm_integrity u_integrity (
+    mdm_integrity #(.AES_LOW_AREA(AES_LOW_AREA)) u_integrity (
         .clk(clk), .rst_n(rst_n), .start(int_start), .alg(int_alg_q), .key(int_key_q),
         .count(count_q), .bearer(bearer_q), .direction(direction_q), .length(int_len),
         .in_valid(int_in_valid), .in_ready(int_in_ready), .in_data(int_in),

@@ -1,6 +1,10 @@
 `timescale 1ns/1ps
-module tb_primitives;
+module tb_primitives #(parameter integer TEST_AES_LOW_AREA=1);
+  localparam integer AES_CYCLES = (TEST_AES_LOW_AREA==1) ? 50 : 5;
   `include "mdm_aes_sbox.vh"
+  reg [7:0] sbox_input=0;
+  wire [7:0] sbox_output;
+  mdm_aes_sbox sbox(.value(sbox_input),.result(sbox_output));
   reg [7:0] expected_sbox[0:255];
   string sbox_path;
   reg clk=0, rst_n=0;
@@ -9,7 +13,8 @@ module tb_primitives;
   wire aes_ready,aes_busy,aes_done;
   reg [127:0] aes_key=0,aes_input=0;
   wire [127:0] aes_output;
-  mdm_aes128 aes(clk,rst_n,aes_start,aes_ready,aes_key,aes_input,aes_busy,aes_done,aes_output);
+  mdm_aes128 #(.AES_LOW_AREA(TEST_AES_LOW_AREA)) aes(
+      clk,rst_n,aes_start,aes_ready,aes_key,aes_input,aes_busy,aes_done,aes_output);
 
   reg stream_start=0,advance=0;
   wire sv,zv;
@@ -26,8 +31,12 @@ module tb_primitives;
     $readmemh(sbox_path,expected_sbox);
     for(i=0;
         i<256;
-        i=i+1)
-      if(aes_sbox(8'(i))!==expected_sbox[i]) $fatal(1,"AES S-box mismatch at %0d",i);
+        i=i+1) begin
+      sbox_input=8'(i);
+      #1;
+      if(aes_sbox(8'(i))!==expected_sbox[i] || sbox_output!==expected_sbox[i])
+        $fatal(1,"AES S-box mismatch at %0d",i);
+    end
     snow_expect[0]=32'hc54058f7;
     snow_expect[1]=32'ha71f0d96;
     snow_expect[2]=32'h54246457;
@@ -37,7 +46,7 @@ module tb_primitives;
     repeat(3) @(negedge clk);
     rst_n=1;
     // FIPS-197 AES-128 example; launch the identical second block at the
-    // earliest legal edge, verifying both five-cycle latency and interval.
+    // earliest legal edge, verifying the selected latency and interval.
     @(negedge clk);
     aes_key=128'h000102030405060708090a0b0c0d0e0f;
     aes_input=128'h00112233445566778899aabbccddeeff;
@@ -47,14 +56,14 @@ module tb_primitives;
     @(negedge clk);
     aes_start=0;
     for(i=1;
-        i<5;
+        i<AES_CYCLES;
         i=i+1) begin
       @(posedge clk);
       #1;
-      if (aes_done) $fatal(1,"AES completed before cycle 5");
+      if (aes_done) $fatal(1,"AES completed before cycle %0d",AES_CYCLES);
     end
     @(negedge clk);
-    if (!aes_ready) $fatal(1,"AES cannot accept at the five-cycle boundary");
+    if (!aes_ready) $fatal(1,"AES cannot accept at the %0d-cycle boundary",AES_CYCLES);
     aes_start=1;
     @(posedge clk);
     #1;
@@ -63,7 +72,7 @@ module tb_primitives;
     @(negedge clk);
     aes_start=0;
     for(i=1;
-        i<5;
+        i<AES_CYCLES;
         i=i+1) begin
       @(posedge clk);
       #1;
@@ -107,7 +116,7 @@ module tb_primitives;
     end
     @(negedge clk);
     advance=0;
-    $display("PASS primitive AES latency/II and SNOW3G/ZUC init, stall, 1 word/cycle");
+    $display("PASS primitive AES %0d-cycle latency/II and SNOW3G/ZUC init, stall, 1 word/cycle",AES_CYCLES);
     $finish;
   end
   initial begin #100000;
