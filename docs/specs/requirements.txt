@@ -1,0 +1,4 @@
+# Optional: regenerate Word specifications in a document-maintenance environment.
+python-docx==1.1.2
+Pillow==11.1.0
+lxml==6.1.3
