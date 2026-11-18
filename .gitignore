@@ -5,6 +5,8 @@ __pycache__/
 *.py[cod]
 *.vcd
 *.fst
+*.fsdb
+*.fsdb.*
 
 # Download bundles are generated locally and should not be committed.
 /deliverables/

@@ -2,6 +2,8 @@
 
 生成波形不修改可综合 RTL；波形由仿真 testbench 生成。定向包测试使用固定输入和参考模型结果自动核对响应、MAC、所有输出字节、握手及依赖保护；任何错误或覆盖不足都会令仿真失败。另有独立的 AES 块波形，便于观察低面积实现的轮次、列处理及连续启动。
 
+本文的 `make wave` 是 Verilator/VCD 流程。如果本地使用 Synopsys VCS 和 Verdi，需要原生 FSDB，请使用 [`make fsdb` 的专门说明](synopsys_fsdb.md)。FSDB 与 VCD 使用同一组用例和信号命名，但依赖及打开方式不同。
+
 ## 运行与生成 VCD
 
 在仓库根目录准备 Python 3、GNU Make、C++ 编译器和 Verilator 5（支持 `--binary --timing --trace`）。可选安装 PyCryptodome，以独立交叉检查 AES-CTR、AES-CMAC 和 AES 块；没有它也可生成向量和运行自检。GTKWave 用于查看波形，不是运行仿真的必要条件。

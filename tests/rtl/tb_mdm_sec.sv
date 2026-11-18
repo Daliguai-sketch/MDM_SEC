@@ -34,6 +34,22 @@ module tb_mdm_sec #(
             $dumpvars(0,tb_mdm_sec);
         end
     end
+`ifdef MDM_SEC_FSDB
+    // VCS links these Verdi PLI tasks only for the explicit FSDB build.
+    // Buffer memories are optional because dumping them can be very large.
+    string fsdb_path;
+    initial begin
+        if ($value$plusargs("FSDB=%s",fsdb_path)) begin
+            $display("Writing packet FSDB: %s",fsdb_path);
+            $fsdbDumpfile(fsdb_path);
+            $fsdbDumpvars(0,tb_mdm_sec);
+            if ($test$plusargs("FSDB_MDA")) begin
+                $display("Dumping packet-buffer memory arrays");
+                $fsdbDumpMDA(0,tb_mdm_sec.dut.u_input_buffer);
+            end
+        end
+    end
+`endif
 
     integer cycle_count=0,enc_started_at=-1,int_started_at=-1,enc_done_at=-1,int_done_at=-1;
     integer enc_start_count=0,int_start_count=0,rx_captured_at=-1,aes_issued_count=0;
@@ -240,6 +256,8 @@ module tb_mdm_sec #(
     initial begin
         if (!$value$plusargs("VECTORS=%s",vector_path))
             $fatal(1,"pass +VECTORS=path");
+        if ($test$plusargs("DIRECTED_COVERAGE"))
+            $display("DIRECTED configuration MAX_BYTES=%0d AES_LOW_AREA=%0d",TEST_MAX_BYTES,TEST_AES_LOW_AREA);
         fd=$fopen(vector_path,"r");
         if (fd==0) $fatal(1,"cannot open %s",vector_path);
         for(i=2;

@@ -15,6 +15,23 @@ WAVE_AES_BLOCKS ?= 8
 WAVE_MAX_BYTES ?= 512
 WAVE_DIR ?= $(BUILD_DIR)/waveforms
 WAVE_VARIANT = $(if $(filter 0,$(WAVE_AES_LOW_AREA)),fast,low_area)
+
+# Optional Synopsys VCS/Verdi flow. VERDI_HOME or NOVAS_HOME may point to
+# different releases; users can also pass VERDI_PLI_DIR or the two files directly.
+VCS ?= $(if $(and $(strip $(VCS_HOME)),$(wildcard $(VCS_HOME)/bin/vcs)),$(VCS_HOME)/bin/vcs,vcs)
+VERDI ?= $(if $(and $(strip $(VERDI_HOME)),$(wildcard $(VERDI_HOME)/bin/verdi)),$(VERDI_HOME)/bin/verdi,verdi)
+VCS_FLAGS ?= -full64 -sverilog -timescale=1ns/1ps -debug_access+all -kdb -lca +memcbk
+VCS_EXTRA_FLAGS ?=
+VCS_SIM_FLAGS ?= +fsdb+autoflush
+VERDI_PLI_DIR ?= $(patsubst %/novas.tab,%,$(firstword $(foreach root,$(VERDI_HOME) $(NOVAS_HOME),$(wildcard $(root)/share/PLI/VCS/LINUX64/novas.tab $(root)/share/PLI/VCS/linux64/novas.tab))))
+VERDI_TAB ?= $(if $(strip $(VERDI_PLI_DIR)),$(VERDI_PLI_DIR)/novas.tab,)
+VERDI_PLI ?= $(if $(strip $(VERDI_PLI_DIR)),$(VERDI_PLI_DIR)/pli.a,)
+FSDB_DIR ?= $(WAVE_DIR)
+FSDB_MDA ?= 0
+VCS_AES_CYCLES = $(if $(filter 0,$(WAVE_AES_LOW_AREA)),5,50)
+VCS_PACKET_BUILD = $(BUILD_DIR)/vcs_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)
+VCS_AES_BUILD = $(BUILD_DIR)/vcs_aes_$(WAVE_AES_LOW_AREA)
+
 # Some PyPI verilator-cli wheels omit the compiler's PCH include flag. Native
 # Verilator installations use their own settings; override VMAKEFLAGS if needed.
 VMAKEFLAGS ?= $(if $(findstring verilator-cli,$(notdir $(VERILATOR))),CFG_CXXFLAGS_PCH_I=-include,)
@@ -25,10 +42,14 @@ RTL := $(AES_RTL) rtl/mdm_snow3g.v rtl/mdm_zuc.v rtl/mdm_packet_buffer.v \
        rtl/mdm_cipher.v rtl/mdm_integrity.v rtl/mdm_sec.v
 HEADERS := rtl/mdm_sboxes.vh rtl/mdm_aes_sbox.vh
 
-.PHONY: all test example lint test-style test-aes test-fast test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed wave wave-packet wave-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
+.PHONY: all test example lint test-style test-aes test-fast test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcs-flow wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
 all: test
 
-test: lint test-style example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-directed
+test: lint test-style example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-directed test-vcs-flow
+
+# This verifies command wiring with mocks, not real VCS/PLI or FSDB contents.
+test-vcs-flow:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/test_vcs_fsdb_flow.py
 
 test-style:
 	$(PYTHON) tests/check_rtl_style.py
@@ -157,6 +178,66 @@ wave-aes: $(BUILD_DIR)/aes_vectors.txt $(BUILD_DIR)/tb_wave_aes_$(WAVE_AES_LOW_A
 
 wave: wave-packet wave-aes
 	@echo "Waveforms written to $(WAVE_DIR)"
+
+# Native FSDB requires licensed VCS plus the Verdi PLI. Keep all VCS-generated
+# csrc, simv.daidir, KDB and logs in separate configuration-specific folders.
+$(VCS_PACKET_BUILD)/simv: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv Makefile
+	@command -v "$(VCS)" >/dev/null 2>&1 || { echo 'Install/configure VCS (or set VCS=/absolute/path/to/vcs)'; exit 1; }
+	@case "$(WAVE_AES_LOW_AREA)" in 0|1) ;; *) echo 'WAVE_AES_LOW_AREA must be 0 or 1'; exit 1;; esac
+	@test $(WAVE_MAX_BYTES) -ge 512 -a $(WAVE_MAX_BYTES) -le 65535 || { echo 'WAVE_MAX_BYTES must be 512..65535 for the directed suite'; exit 1; }
+	@if [ ! -f "$(VERDI_TAB)" ] || [ ! -f "$(VERDI_PLI)" ]; then echo 'Verdi PLI not found: set VERDI_HOME/NOVAS_HOME, VERDI_PLI_DIR, or VERDI_TAB and VERDI_PLI'; exit 1; fi
+	@mkdir -p "$(@D)"
+	cd "$(@D)" && "$(VCS)" $(VCS_FLAGS) $(VCS_EXTRA_FLAGS) +define+MDM_SEC_FSDB \
+		+incdir+$(abspath rtl) -top tb_mdm_sec \
+		-pvalue+tb_mdm_sec.TEST_MAX_BYTES=$(WAVE_MAX_BYTES) -pvalue+tb_mdm_sec.TEST_AES_LOW_AREA=$(WAVE_AES_LOW_AREA) \
+		-P "$(abspath $(VERDI_TAB))" "$(abspath $(VERDI_PLI))" $(abspath $(RTL)) $(abspath tests/rtl/tb_mdm_sec.sv) -o simv -l vcs_compile.log
+	@test -x "$@" || { echo 'VCS did not produce an executable simv'; exit 1; }
+	@touch "$@"
+
+$(VCS_AES_BUILD)/simv: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv Makefile
+	@command -v "$(VCS)" >/dev/null 2>&1 || { echo 'Install/configure VCS (or set VCS=/absolute/path/to/vcs)'; exit 1; }
+	@case "$(WAVE_AES_LOW_AREA)" in 0|1) ;; *) echo 'WAVE_AES_LOW_AREA must be 0 or 1'; exit 1;; esac
+	@if [ ! -f "$(VERDI_TAB)" ] || [ ! -f "$(VERDI_PLI)" ]; then echo 'Verdi PLI not found: set VERDI_HOME/NOVAS_HOME, VERDI_PLI_DIR, or VERDI_TAB and VERDI_PLI'; exit 1; fi
+	@mkdir -p "$(@D)"
+	cd "$(@D)" && "$(VCS)" $(VCS_FLAGS) $(VCS_EXTRA_FLAGS) +define+MDM_SEC_FSDB \
+		+incdir+$(abspath rtl) -top tb_aes_random -pvalue+tb_aes_random.TEST_AES_LOW_AREA=$(WAVE_AES_LOW_AREA) \
+		-P "$(abspath $(VERDI_TAB))" "$(abspath $(VERDI_PLI))" $(abspath $(AES_RTL)) $(abspath tests/rtl/tb_aes_random.sv) -o simv -l vcs_compile.log
+	@test -x "$@" || { echo 'VCS did not produce an executable simv'; exit 1; }
+	@touch "$@"
+
+fsdb-packet: $(BUILD_DIR)/wave_vectors.txt $(BUILD_DIR)/wave_vectors.cases.txt $(VCS_PACKET_BUILD)/simv
+	@case "$(FSDB_MDA)" in 0|1) ;; *) echo 'FSDB_MDA must be 0 or 1'; exit 1;; esac
+	@mkdir -p "$(FSDB_DIR)"
+	@rm -f "$(FSDB_DIR)/mdm_sec_$(WAVE_VARIANT).fsdb" "$(VCS_PACKET_BUILD)/sim.log"
+	cd "$(VCS_PACKET_BUILD)" && ./simv "+VECTORS=$(abspath $(BUILD_DIR)/wave_vectors.txt)" +DIRECTED_COVERAGE +CASE_LOG \
+		"+FSDB=$(abspath $(FSDB_DIR)/mdm_sec_$(WAVE_VARIANT).fsdb)" $(if $(filter 1,$(FSDB_MDA)),+FSDB_MDA,) $(VCS_SIM_FLAGS) -l sim.log
+	@grep -Fq 'DIRECTED configuration MAX_BYTES=$(WAVE_MAX_BYTES) AES_LOW_AREA=$(WAVE_AES_LOW_AREA)' "$(VCS_PACKET_BUILD)/sim.log" || { echo 'Packet VCS parameter mismatch; inspect $(VCS_PACKET_BUILD)/sim.log'; exit 1; }
+	@grep -Fq 'PASS directed waveform cases:' "$(VCS_PACKET_BUILD)/sim.log" && grep -Fq 'PASS 20 packet vectors (MAX_BYTES=$(WAVE_MAX_BYTES))' "$(VCS_PACKET_BUILD)/sim.log" || { echo 'Packet self-check/coverage did not pass; inspect $(VCS_PACKET_BUILD)/sim.log'; exit 1; }
+	@test -s "$(FSDB_DIR)/mdm_sec_$(WAVE_VARIANT).fsdb" || { echo 'Packet FSDB missing or empty; inspect $(VCS_PACKET_BUILD)/sim.log'; exit 1; }
+	@echo 'PASS packet self-check and nonempty FSDB: $(FSDB_DIR)/mdm_sec_$(WAVE_VARIANT).fsdb'
+
+fsdb-aes: $(BUILD_DIR)/aes_vectors.txt $(VCS_AES_BUILD)/simv
+	@test $(WAVE_AES_BLOCKS) -ge 2 -a $(WAVE_AES_BLOCKS) -le $$(wc -l < "$(BUILD_DIR)/aes_vectors.txt") || { echo 'WAVE_AES_BLOCKS must be 2..the number of AES vectors'; exit 1; }
+	@mkdir -p "$(FSDB_DIR)"
+	@rm -f "$(FSDB_DIR)/aes128_$(WAVE_VARIANT).fsdb" "$(VCS_AES_BUILD)/sim.log"
+	cd "$(VCS_AES_BUILD)" && ./simv "+VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)" +LIMIT=$(WAVE_AES_BLOCKS) +CASE_LOG \
+		"+FSDB=$(abspath $(FSDB_DIR)/aes128_$(WAVE_VARIANT).fsdb)" $(VCS_SIM_FLAGS) -l sim.log
+	@grep -Fq 'PASS $(WAVE_AES_BLOCKS) AES blocks, $(VCS_AES_CYCLES)-cycle latency/II,' "$(VCS_AES_BUILD)/sim.log" || { echo 'AES self-check or AES_LOW_AREA parameter did not pass; inspect $(VCS_AES_BUILD)/sim.log'; exit 1; }
+	@test -s "$(FSDB_DIR)/aes128_$(WAVE_VARIANT).fsdb" || { echo 'AES FSDB missing or empty; inspect $(VCS_AES_BUILD)/sim.log'; exit 1; }
+	@echo 'PASS AES self-check and nonempty FSDB: $(FSDB_DIR)/aes128_$(WAVE_VARIANT).fsdb'
+
+fsdb: fsdb-packet fsdb-aes
+	@echo "FSDB waveforms written to $(FSDB_DIR)"
+
+verdi-packet:
+	@command -v "$(VERDI)" >/dev/null 2>&1 || { echo 'Configure Verdi (or set VERDI=/absolute/path/to/verdi)'; exit 1; }
+	@test -s "$(FSDB_DIR)/mdm_sec_$(WAVE_VARIANT).fsdb" -a -d "$(VCS_PACKET_BUILD)/simv.daidir" || { echo 'Run make fsdb-packet with the same parameters first'; exit 1; }
+	cd "$(VCS_PACKET_BUILD)" && "$(VERDI)" -simflow -dbdir simv.daidir -ssf "$(abspath $(FSDB_DIR)/mdm_sec_$(WAVE_VARIANT).fsdb)"
+
+verdi-aes:
+	@command -v "$(VERDI)" >/dev/null 2>&1 || { echo 'Configure Verdi (or set VERDI=/absolute/path/to/verdi)'; exit 1; }
+	@test -s "$(FSDB_DIR)/aes128_$(WAVE_VARIANT).fsdb" -a -d "$(VCS_AES_BUILD)/simv.daidir" || { echo 'Run make fsdb-aes with the same parameters first'; exit 1; }
+	cd "$(VCS_AES_BUILD)" && "$(VERDI)" -simflow -dbdir simv.daidir -ssf "$(abspath $(FSDB_DIR)/aes128_$(WAVE_VARIANT).fsdb)"
 
 $(BUILD_DIR)/packet_vectors.txt: tests/gen_vectors.py tests/reference_model.py \
        sec_core/aes/sec_aes_core_enc.py sec_core/snow3g/sec_snow3g_core.py sec_core/zuc/sec_zuc_core.py

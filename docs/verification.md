@@ -12,6 +12,7 @@
 | `make test-fast` | PASS：高速 AES 的原语、通道、2641 个默认容量包和 12 个最大容量包；同样覆盖模式 2–5 的 12 种并发组合和最大地址回绕 |
 | `make test-directed`，以及 `make test-directed WAVE_AES_LOW_AREA=0` | PASS：两种 AES 配置各 20 个定向包，覆盖六种模式、认证成功/失败、MAC/明密文依赖等待、原地覆盖保护和同沿读旧值 |
 | `make wave`，以及 `make wave WAVE_AES_LOW_AREA=0` | PASS：两种配置分别生成包和 AES VCD；自检并检查 VCD 内部时间、信号、模式 5 成功/失败事件和 AES 固定答案，见 [waveforms.md](waveforms.md) |
+| `make test-vcs-flow` | PASS：使用模拟工具检查 VCS/Verdi 命令参数、PLI 路径、配置选择和失败处理；**不生成或验证真正的 FSDB** |
 | `make example` | PASS：模式 4 AES-CTR/AES-CMAC 命令、输入、响应和输出握手；MAC 和密文另与 PyCryptodome 核对 |
 | `make yosys-check`、`make yosys-check CHECK_MAX_BYTES=65535` | PASS：低面积配置，默认与最大参数的 Verilog 前端、层次展开、优化及 `check -assert` 报告 0 问题；最大容量只检查结构，不将其全部映射成触发器 |
 | `make yosys-check CHECK_MAX_BYTES=65535 CHECK_AES_LOW_AREA=0` | PASS：高速配置、最大容量层次和结构检查 0 问题 |
@@ -27,6 +28,8 @@
 模式 5 包含模式 2→5 同参数往返、解密后的四个验证码字节分别篡改、A 和密文载荷篡改、正确与错误验证码、跨 32/128 位边界、仅 4 字节验证码、`B<4` 拒绝、提取后复位、跨命令清除、背压以及最大 65535 字节输入。测试逐项比较提取值、计算的 MAC、相等标志、长度和所有输出 beat；最大长度同时检查 AES 末块启动数和 16 位字节计数不回绕。正常和最大长度的 AES-CTR/CMAC 参考结果均额外用 PyCryptodome 核对。
 
 AES 固定答案采用 FIPS-197：`000102...0f` 密钥、`001122...ff` 输入、`69c4e0d86a7b0430d8cdb78070b4c55a` 输出；原语测试还覆盖全部 256 个新旧 S-box 值，以及 SNOW 3G、ZUC 已知答案。使用 `python3 -S` 对 AES、默认包、最小容量包、最大容量包和波形定向包的向量生成器重新生成，均与启用 PyCryptodome 的结果逐字节一致。没有 PyCryptodome 时仍会跑参考模型和固定答案，但会跳过其独立交叉检查。
+
+新增 VCS/Verdi FSDB 接口时，使用四态 Icarus 仿真器（WebAssembly 版本）分别运行了低面积和高速配置的 20 个包定向用例、各 8 个 AES 块，均通过；启用 FSDB 宏的两个 bench 也完成了 HDL 编译检查。本次环境没有 VCS、Verdi 及其授权，尚未实际链接 Verdi PLI、生成或打开原生 FSDB；请在本地按 [synopsys_fsdb.md](synopsys_fsdb.md) 运行验证。
 
 综合结果为通用逻辑/触发器单元数量，不是标准单元面积、SRAM 实际面积、最大频率或签核结果。使用何种 SRAM、端口和读写碰撞语义会显著改变实现；见 [area_optimization.md](area_optimization.md)。
 

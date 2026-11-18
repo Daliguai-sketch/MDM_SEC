@@ -29,6 +29,16 @@ module tb_aes_random #(parameter integer TEST_AES_LOW_AREA=1);
             $dumpvars(0,tb_aes_random);
         end
     end
+`ifdef MDM_SEC_FSDB
+    string fsdb_path;
+    initial begin
+        if ($value$plusargs("FSDB=%s",fsdb_path)) begin
+            $display("Writing AES FSDB: %s",fsdb_path);
+            $fsdbDumpfile(fsdb_path);
+            $fsdbDumpvars(0,tb_aes_random);
+        end
+    end
+`endif
 
     always @(posedge clk) begin
         if (rst_n && scoreboard_active) begin
