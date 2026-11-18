@@ -22,6 +22,19 @@ module tb_mdm_sec #(
     wire [15:0] cipher_keep;
     mdm_sec #(.MAX_BYTES(TEST_MAX_BYTES),.AES_LOW_AREA(TEST_AES_LOW_AREA)) dut(.*);
 
+    // Waveform-friendly markers: prelude, command, input, run, response,
+    // output and case-complete. -1 identifies the reset/error prelude.
+    reg [2:0] wave_phase=0;
+    integer wave_case_id=-1;
+    string wave_path;
+    initial begin
+        if ($value$plusargs("WAVE=%s",wave_path)) begin
+            $display("Writing packet waveform: %s",wave_path);
+            $dumpfile(wave_path);
+            $dumpvars(0,tb_mdm_sec);
+        end
+    end
+
     integer cycle_count=0,enc_started_at=-1,int_started_at=-1,enc_done_at=-1,int_done_at=-1;
     integer enc_start_count=0,int_start_count=0,rx_captured_at=-1,aes_issued_count=0;
     integer produced_bytes=0,overlap_cycles=0,enc_before_int_done=0,int_before_enc_done=0;
@@ -142,6 +155,9 @@ module tb_mdm_sec #(
     reg [15:0] held_keep;
     reg held_last,stalled;
     string vector_path;
+    reg [5:0] directed_mode_mask=0;
+    reg [3:0] directed_dependency_mask=0;
+    integer directed_count=0;
 
     task automatic reject_command(input [2:0] m, input [15:0] al, input [15:0] bl);
         begin
@@ -265,6 +281,8 @@ module tb_mdm_sec #(
         end
         if (TEST_MAX_BYTES==1)
             reject_command(3'd0,16'd0,16'd2);
+        if (TEST_MAX_BYTES>1 && TEST_MAX_BYTES<65535 && TEST_MAX_BYTES!=2048)
+            reject_command(3'd0,16'(TEST_MAX_BYTES+1),16'd0);
         // Both wrapped A+B and wrapped mode-2 B+MAC must be rejected.
         // The B+MAC cases are especially important when MAX_BYTES=65535.
         reject_command(3'd0,16'd65535,16'd1);
@@ -358,6 +376,11 @@ module tb_mdm_sec #(
             end
             @(negedge clk);
             if(!cmd_ready) $fatal(1,"case %0d command not ready",id);
+            wave_case_id=id;
+            wave_phase=1;
+            if($test$plusargs("CASE_LOG"))
+                $display("CASE %0d mode=%0d EEA=%0d EIA=%0d A=%0d B=%0d at %0t",
+                         id,mode,ca,ia,alen,blen,$time);
             enc_started_at=-1;
             int_started_at=-1;
             enc_start_count=0;
@@ -380,6 +403,7 @@ module tb_mdm_sec #(
             @(posedge clk);
             @(negedge clk);
             cmd_valid=0;
+            wave_phase=2;
             // Descriptor fields may change immediately after the handshake.
             cmd_cipher_key=~ck;
             cmd_int_key=~ik;
@@ -398,6 +422,7 @@ module tb_mdm_sec #(
             end
             @(negedge clk);
             in_valid=0;
+            wave_phase=3;
             ticks=0;
             while(!rsp_valid) begin
                 @(negedge clk);
@@ -405,6 +430,7 @@ module tb_mdm_sec #(
                 if(ticks>(TEST_MAX_BYTES+1)*4+4000)
                     $fatal(1,"case %0d response timeout mode=%0d ca=%0d ia=%0d",id,mode,ca,ia);
             end
+            wave_phase=4;
             if(rsp_error || rsp_mac!==expected_mac || rsp_mac_valid!==1'(mvalid) ||
                rsp_cipher_bytes!==16'(clen) || rsp_rx_mac!==expected_rx_mac ||
                rsp_rx_mac_valid!==1'(rvalid) || rsp_mac_match!==1'(expected_match))
@@ -457,6 +483,32 @@ module tb_mdm_sec #(
                        id,aes_issued_count,(expected_enc_bytes+15)/16,dut.u_cipher.issued,expected_enc_bytes);
             if(mode==0 && int_started_at!=-1) $fatal(1,"case %0d unexpected integrity start",id);
             if(mode==1 && enc_started_at!=-1) $fatal(1,"case %0d unexpected cipher start",id);
+            if($test$plusargs("CASE_LOG"))
+                $display("CASE %0d response MAC=%08h RX=%08h match=%0d out=%0d; overlap=%0d waits(old/MAC/result)=%0d/%0d/%0d same-edge=%0d at %0t",
+                         id,rsp_mac,rsp_rx_mac,rsp_mac_match,rsp_cipher_bytes,overlap_cycles,
+                         wait_for_original,wait_for_mac,wait_for_result,same_edge_original,$time);
+            if($test$plusargs("DIRECTED_COVERAGE")) begin
+                directed_count=directed_count+1;
+                directed_mode_mask[mode]=1'b1;
+                if(id==7) begin
+                    if(wait_for_original==0 || wait_for_mac==0 || same_edge_original==0 || overlap_cycles==0)
+                        $fatal(1,"directed mode 2 did not exercise in-place and MAC dependencies");
+                    directed_dependency_mask[0]=1;
+                end
+                if(id==9) begin
+                    if(wait_for_original==0 || same_edge_original==0 || overlap_cycles==0)
+                        $fatal(1,"directed mode 4 did not exercise in-place dependency");
+                    directed_dependency_mask[1]=1;
+                end
+                if(id==8) begin
+                    if(wait_for_result==0) $fatal(1,"directed mode 3 did not wait for ciphertext");
+                    directed_dependency_mask[2]=1;
+                end
+                if(id==18) begin
+                    if(wait_for_result==0) $fatal(1,"directed mode 5 did not wait for plaintext");
+                    directed_dependency_mask[3]=1;
+                end
+            end
             repeat(3) begin
                 @(negedge clk);
                 if(!rsp_valid || rsp_error || rsp_mac!==expected_mac || rsp_mac_valid!==1'(mvalid) ||
@@ -468,6 +520,7 @@ module tb_mdm_sec #(
             @(posedge clk);
             @(negedge clk);
             rsp_ready=0;
+            wave_phase=5;
             idx=0;
             ticks=0;
             stalled=0;
@@ -494,11 +547,20 @@ module tb_mdm_sec #(
             end
             cipher_ready=0;
             if(!cmd_ready || cipher_valid) $fatal(1,"case %0d did not finish",id);
+            wave_phase=6;
+            if($test$plusargs("CASE_LOG"))
+                $display("PASS case %0d at %0t",id,$time);
             rc=$fscanf(fd,"%d %d %d %d %h %h %h %d %d %d %d %h %d %d %h %d %d\n",
                        id,mode,ca,ia,ck,ik,count,bearer,dir,alen,blen,expected_mac,mvalid,clen,expected_rx_mac,rvalid,expected_match);
         end
         if(rc!=-1) $fatal(1,"bad vector header: fscanf=%0d",rc);
         $fclose(fd);
+        if($test$plusargs("DIRECTED_COVERAGE")) begin
+            if(directed_count!=20 || directed_mode_mask!==6'b111111 || directed_dependency_mask!==4'b1111)
+                $fatal(1,"directed coverage incomplete: count=%0d modes=%b dependencies=%b",
+                       directed_count,directed_mode_mask,directed_dependency_mask);
+            $display("PASS directed waveform cases: all six modes, dependencies and same-edge original reads");
+        end
         if(TEST_MAX_BYTES==2048 && $test$plusargs("REQUIRE_PARALLEL_COVERAGE")) begin
             for(i=2;
                 i<=5;
@@ -518,6 +580,8 @@ module tb_mdm_sec #(
             $display("PASS in-place protection waits (2/4): %0d/%0d; same-edge original reads (2/4): %0d/%0d",
                      original_wait_cases[2],original_wait_cases[4],original_same_edge_cases[2],original_same_edge_cases[4]);
         end
+        wave_case_id=-1;
+        wave_phase=0;
         // Also abort a held output. Stale RAM contents must not be exposed
         // on the external data bus after reset while cipher_valid is low.
         @(negedge clk);

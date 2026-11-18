@@ -19,8 +19,16 @@ module tb_aes_random #(parameter integer TEST_AES_LOW_AREA=1);
     reg [127:0] expected[0:MAX_VECTORS-1];
     integer launch_cycle[0:MAX_VECTORS-1];
     integer fd,rc,count=0,cycle=0,sent=0,completed=0,back_to_back=0;
+    integer vector_limit;
     reg scoreboard_active=0;
-    string vector_path;
+    string vector_path,wave_path;
+    initial begin
+        if ($value$plusargs("WAVE=%s",wave_path)) begin
+            $display("Writing AES waveform: %s",wave_path);
+            $dumpfile(wave_path);
+            $dumpvars(0,tb_aes_random);
+        end
+    end
 
     always @(posedge clk) begin
         if (rst_n && scoreboard_active) begin
@@ -30,6 +38,9 @@ module tb_aes_random #(parameter integer TEST_AES_LOW_AREA=1);
                 launch_cycle[sent]=cycle;
                 if (sent>0 && cycle-launch_cycle[sent-1]==CYCLES)
                     back_to_back=back_to_back+1;
+                if($test$plusargs("CASE_LOG"))
+                    $display("AES start block=%0d cycle=%0d input=%032h key=%032h at %0t",
+                             sent,cycle,block_in,key,$time);
                 sent=sent+1;
             end
             #1;
@@ -38,6 +49,9 @@ module tb_aes_random #(parameter integer TEST_AES_LOW_AREA=1);
                     $fatal(1,"AES completion at wrong cycle, block %0d",completed);
                 if (block_out!==expected[completed])
                     $fatal(1,"AES block %0d: got %h expected %h",completed,block_out,expected[completed]);
+                if($test$plusargs("CASE_LOG"))
+                    $display("AES done block=%0d cycle=%0d output=%032h at %0t",
+                             completed,cycle,block_out,$time);
                 completed=completed+1;
             end else if (completed<sent && cycle-launch_cycle[completed]>=CYCLES) begin
                 $fatal(1,"AES completion missing for block %0d",completed);
@@ -90,6 +104,12 @@ module tb_aes_random #(parameter integer TEST_AES_LOW_AREA=1);
         end
         if(rc!=-1 || count<200) $fatal(1,"bad or insufficient AES vectors");
         $fclose(fd);
+        // A smaller prefix keeps an interactive waveform compact. The default
+        // regression still checks all vectors and its 200-block coverage.
+        if ($value$plusargs("LIMIT=%d",vector_limit)) begin
+            if(vector_limit<2 || vector_limit>count) $fatal(1,"invalid AES vector LIMIT");
+            count=vector_limit;
+        end
         repeat(3) @(negedge clk);
         rst_n=1;
         abort_block(0);
@@ -119,7 +139,8 @@ module tb_aes_random #(parameter integer TEST_AES_LOW_AREA=1);
             end
         end
         start=0;
-        if(back_to_back<199) $fatal(1,"AES earliest-edge coverage incomplete");
+        if(back_to_back<((count<200) ? count-1 : 199))
+            $fatal(1,"AES earliest-edge coverage incomplete");
         repeat(5) begin
             @(posedge clk);
             #1;

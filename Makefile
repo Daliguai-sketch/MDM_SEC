@@ -10,6 +10,11 @@ SYNTH_AES_LOW_AREA ?= 1
 BUFFER_CAP_BYTES ?= 2052
 BUFFER_READ_PORTS ?= 2
 AREA_BASE_REF ?= 711947b1c08a16688d1521be45426868f4fd03e9
+WAVE_AES_LOW_AREA ?= 1
+WAVE_AES_BLOCKS ?= 8
+WAVE_MAX_BYTES ?= 512
+WAVE_DIR ?= $(BUILD_DIR)/waveforms
+WAVE_VARIANT = $(if $(filter 0,$(WAVE_AES_LOW_AREA)),fast,low_area)
 # Some PyPI verilator-cli wheels omit the compiler's PCH include flag. Native
 # Verilator installations use their own settings; override VMAKEFLAGS if needed.
 VMAKEFLAGS ?= $(if $(findstring verilator-cli,$(notdir $(VERILATOR))),CFG_CXXFLAGS_PCH_I=-include,)
@@ -20,10 +25,10 @@ RTL := $(AES_RTL) rtl/mdm_snow3g.v rtl/mdm_zuc.v rtl/mdm_packet_buffer.v \
        rtl/mdm_cipher.v rtl/mdm_integrity.v rtl/mdm_sec.v
 HEADERS := rtl/mdm_sboxes.vh rtl/mdm_aes_sbox.vh
 
-.PHONY: all test example lint test-style test-aes test-fast test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
+.PHONY: all test example lint test-style test-aes test-fast test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed wave wave-packet wave-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
 all: test
 
-test: lint test-style example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast
+test: lint test-style example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-directed
 
 test-style:
 	$(PYTHON) tests/check_rtl_style.py
@@ -102,6 +107,56 @@ test-buffer: $(BUILD_DIR)/tb_packet_buffer/Vtb_packet_buffer $(BUILD_DIR)/tb_buf
 	$(BUILD_DIR)/tb_buffer_min/Vtb_packet_buffer
 	$(BUILD_DIR)/tb_buffer_one_read/Vtb_packet_buffer
 	$(BUILD_DIR)/tb_buffer_full/Vtb_packet_buffer
+
+# A compact directed suite uses the same self-checking packet bench as the
+# regression. Its trace-enabled binary does not write VCD unless +WAVE is set.
+$(BUILD_DIR)/wave_vectors.txt: tests/gen_wave_vectors.py tests/reference_model.py \
+       sec_core/aes/sec_aes_core_enc.py sec_core/snow3g/sec_snow3g_core.py sec_core/zuc/sec_zuc_core.py
+	@mkdir -p $(@D)
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/gen_wave_vectors.py $@
+
+$(BUILD_DIR)/wave_vectors.cases.txt: $(BUILD_DIR)/wave_vectors.txt
+	@test -f "$@" || PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/gen_wave_vectors.py "$(BUILD_DIR)/wave_vectors.txt"
+
+$(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv Makefile
+	@test -n "$(VERILATOR)" || { echo 'Install Verilator (or set VERILATOR=...)'; exit 1; }
+	@case "$(WAVE_AES_LOW_AREA)" in 0|1) ;; *) echo 'WAVE_AES_LOW_AREA must be 0 or 1'; exit 1;; esac
+	@test $(WAVE_MAX_BYTES) -ge 512 -a $(WAVE_MAX_BYTES) -le 65535 || { echo 'WAVE_MAX_BYTES must be 512..65535 for the directed suite'; exit 1; }
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing --trace --trace-depth 4 -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_mdm_sec -GTEST_MAX_BYTES=$(WAVE_MAX_BYTES) -GTEST_AES_LOW_AREA=$(WAVE_AES_LOW_AREA) --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_mdm_sec.sv
+	@touch $@
+
+test-directed: $(BUILD_DIR)/wave_vectors.txt $(BUILD_DIR)/wave_vectors.cases.txt $(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec
+	$(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/wave_vectors.txt) +DIRECTED_COVERAGE +CASE_LOG
+
+# VCD files are written only by explicit waveform targets, not normal tests.
+$(BUILD_DIR)/tb_wave_aes_$(WAVE_AES_LOW_AREA)/Vtb_aes_random: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv Makefile
+	@test -n "$(VERILATOR)" || { echo 'Install Verilator (or set VERILATOR=...)'; exit 1; }
+	@case "$(WAVE_AES_LOW_AREA)" in 0|1) ;; *) echo 'WAVE_AES_LOW_AREA must be 0 or 1'; exit 1;; esac
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing --trace -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_aes_random -GTEST_AES_LOW_AREA=$(WAVE_AES_LOW_AREA) --Mdir $(abspath $(@D)) $(AES_RTL) tests/rtl/tb_aes_random.sv
+	@touch $@
+
+# Keep VCD hierarchy useful without tracing all 16,512+ shared-buffer storage bits.
+wave-packet: $(BUILD_DIR)/wave_vectors.txt $(BUILD_DIR)/wave_vectors.cases.txt $(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec
+	@mkdir -p "$(WAVE_DIR)"
+	@rm -f "$(WAVE_DIR)/mdm_sec_$(WAVE_VARIANT).vcd"
+	$(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/wave_vectors.txt) +DIRECTED_COVERAGE +CASE_LOG \
+		"+WAVE=$(abspath $(WAVE_DIR)/mdm_sec_$(WAVE_VARIANT).vcd)"
+	$(PYTHON) tests/check_vcd.py packet "$(WAVE_DIR)/mdm_sec_$(WAVE_VARIANT).vcd"
+
+wave-aes: $(BUILD_DIR)/aes_vectors.txt $(BUILD_DIR)/tb_wave_aes_$(WAVE_AES_LOW_AREA)/Vtb_aes_random
+	@test $(WAVE_AES_BLOCKS) -ge 2 -a $(WAVE_AES_BLOCKS) -le $$(wc -l < "$(BUILD_DIR)/aes_vectors.txt") || { echo 'WAVE_AES_BLOCKS must be 2..the number of AES vectors'; exit 1; }
+	@mkdir -p "$(WAVE_DIR)"
+	@rm -f "$(WAVE_DIR)/aes128_$(WAVE_VARIANT).vcd"
+	$(BUILD_DIR)/tb_wave_aes_$(WAVE_AES_LOW_AREA)/Vtb_aes_random +VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt) +LIMIT=$(WAVE_AES_BLOCKS) +CASE_LOG \
+		"+WAVE=$(abspath $(WAVE_DIR)/aes128_$(WAVE_VARIANT).vcd)"
+	$(PYTHON) tests/check_vcd.py aes "$(WAVE_DIR)/aes128_$(WAVE_VARIANT).vcd"
+
+wave: wave-packet wave-aes
+	@echo "Waveforms written to $(WAVE_DIR)"
 
 $(BUILD_DIR)/packet_vectors.txt: tests/gen_vectors.py tests/reference_model.py \
        sec_core/aes/sec_aes_core_enc.py sec_core/snow3g/sec_snow3g_core.py sec_core/zuc/sec_zuc_core.py
