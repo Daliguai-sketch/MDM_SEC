@@ -8,8 +8,10 @@
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
-            //"program": "c:/proj/sec/script/mdm_sec/sec_core/zuc/sec_zuc_ctrl.py",
-            "program": "c:/proj/sec/script/mdm_sec/main.py",
+            // "program": "c:/proj/sec/script/mdm_sec/sec_core/zuc/sec_zuc_ctrl.py",
+            "program": "c:/proj/sec/script/mdm_sec/test.py",
+            //"program": "c:/proj/sec/script/mdm_sec/main.py",
+            //"program": "c:/proj/sec/script/mdm_sec/testbench/gen_zuc_sboxes.py",
             "console": "integratedTerminal",
             // agrs[0]:DEBUG_EN
             //"args":[ ]
