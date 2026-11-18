@@ -22,7 +22,7 @@ make area-compare         # 同条件重现优化前后 AES、缓存和顶层比
 
 也可从 PyPI 安装 `verilator` 和 `yowasp-yosys`；Makefile 自动查找 `verilator`/`verilator-cli` 和 `yosys`/`yowasp-yosys`。工具路径可用 `VERILATOR=...`、`YOSYS=...` 覆盖。Python 的 `pycryptodome` 是可选依赖：安装后额外独立交叉检查 AES；未安装时固定向量和 RTL 回归仍可运行。生成文件位于忽略目录 `build/rtl/`。`make wave` 生成的 VCD 可用 GTKWave 打开；`make fsdb` 需要本地授权的 VCS/Verdi 并通过 Verdi PLI 生成原生 FSDB。两者的命令和依赖不同。
 
-**从例化、握手及运行示例入手，请看 [`docs/quickstart.md`](docs/quickstart.md)；20 个定向用例及波形查看方法见 [`docs/waveforms.md`](docs/waveforms.md)，Synopsys VCS/Verdi 生成 FSDB 见 [`docs/synopsys_fsdb.md`](docs/synopsys_fsdb.md)；接口时序和限制见 [`docs/rtl_interface.md`](docs/rtl_interface.md)，综合对比、AES 层次及 input buffer 的作用见 [`docs/area_optimization.md`](docs/area_optimization.md)，测试记录见 [`docs/verification.md`](docs/verification.md)。** 顶层输入和输出为 128 位，内部通道以 32 位字工作。默认 `AES_LOW_AREA=1` 时 AES 为 50 拍/块，设置 `AES_LOW_AREA=0` 可选旧的 5 拍高速核；SNOW 3G/ZUC 初始化后每拍处理 32 位。整包还包括装载、依赖等待、MAC 和输出握手，不能将原语拍数当作整包延迟。
+**从例化、握手及运行示例入手，请看 [`docs/quickstart.md`](docs/quickstart.md)；验证顶层、向量与 `/design/tb/` 输出目录见 [`docs/tb_environment.md`](docs/tb_environment.md)；20 个定向用例及波形查看方法见 [`docs/waveforms.md`](docs/waveforms.md)，Synopsys VCS/Verdi 生成 FSDB 见 [`docs/synopsys_fsdb.md`](docs/synopsys_fsdb.md)；接口时序和限制见 [`docs/rtl_interface.md`](docs/rtl_interface.md)，综合对比、AES 层次及 input buffer 的作用见 [`docs/area_optimization.md`](docs/area_optimization.md)，测试记录见 [`docs/verification.md`](docs/verification.md)。** 顶层输入和输出为 128 位，内部通道以 32 位字工作。默认 `AES_LOW_AREA=1` 时 AES 为 50 拍/块，设置 `AES_LOW_AREA=0` 可选旧的 5 拍高速核；SNOW 3G/ZUC 初始化后每拍处理 32 位。整包还包括装载、依赖等待、MAC 和输出握手，不能将原语拍数当作整包延迟。
 
 可综合模块是 Verilog `.v`，`.vh` 为 Verilog include 文件；验证环境的 testbench 使用 SystemVerilog `.sv`。状态机的状态寄存器、组合次态和输出/数据逻辑分离；Verilog 源码逐行至多一个代码分号。
 

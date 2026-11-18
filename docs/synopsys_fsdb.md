@@ -1,6 +1,6 @@
 # 使用 VCS 和 Verdi 生成 FSDB
 
-此流程直接使用 **VCS 仿真和 Verdi PLI 生成原生 FSDB**，不是把 VCD 改名为 FSDB。包级和 AES 仍运行与 [waveforms.md](waveforms.md) 相同的自检用例；可综合 RTL 无需增加波形代码。
+此流程直接使用 **VCS 仿真和 Verdi PLI 生成原生 FSDB**，不是把 VCD 改名为 FSDB。包级和 AES 仍运行与 [waveforms.md](waveforms.md) 相同的自检用例；可综合 RTL 无需增加波形代码。验证顶层、输入向量与指定 `/design/tb/` 目录的说明见 [tb_environment.md](tb_environment.md)。
 
 ## 环境准备
 
