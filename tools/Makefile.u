@@ -1,0 +1,32 @@
+# U-network entry point. Run from the root of the transferred bundle.
+# The normal Makefile contains Python-based development/regression targets;
+# do not expose them here or allow the prebuilt inputs to be regenerated.
+U_ALLOWED_GOALS := fsdb fsdb-packet fsdb-aes verdi-packet verdi-aes verify-bundle
+ifneq ($(strip $(filter-out $(U_ALLOWED_GOALS),$(MAKECMDGOALS))),)
+$(error U-network package supports only: $(U_ALLOWED_GOALS))
+endif
+.DEFAULT_GOAL := fsdb
+override FSDB_PREBUILT := 1
+override FSDB_VECTOR_DIR := vectors
+# Lock both paths and dependencies, even against accidental command-line
+# overrides; the manifest below covers exactly these bundled files.
+override FSDB_PACKET_VECTOR := vectors/wave_vectors.txt
+override FSDB_AES_VECTOR := vectors/aes_vectors.txt
+override FSDB_PACKET_VECTOR_DEPS :=
+override FSDB_AES_VECTOR_DEPS :=
+include Makefile
+
+# Check all transferred files on every run. Order-only dependencies also
+# prevent VCS compilation before a failed check.
+.PHONY: verify-bundle u-force-recompile
+verify-bundle:
+	@command -v sha256sum >/dev/null 2>&1 || { echo 'Install/configure sha256sum'; exit 1; }
+	@test -r SHA256SUMS || { echo 'Missing bundle SHA256SUMS'; exit 1; }
+	@sha256sum -c SHA256SUMS
+
+# The archive normalizes source timestamps, so an older build directory could
+# otherwise contain a newer-looking simv for DIFFERENT RTL. Always rebuild for
+# U-network simulations; opening an existing FSDB does not rebuild anything.
+u-force-recompile:
+$(VCS_PACKET_BUILD)/simv $(VCS_AES_BUILD)/simv: u-force-recompile | verify-bundle
+fsdb-packet fsdb-aes verdi-packet verdi-aes: | verify-bundle

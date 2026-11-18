@@ -28,6 +28,24 @@ VERDI_TAB ?= $(if $(strip $(VERDI_PLI_DIR)),$(VERDI_PLI_DIR)/novas.tab,)
 VERDI_PLI ?= $(if $(strip $(VERDI_PLI_DIR)),$(VERDI_PLI_DIR)/pli.a,)
 FSDB_DIR ?= $(WAVE_DIR)
 FSDB_MDA ?= 0
+# Normal development generates vectors on demand. The air-gapped flow uses
+# immutable, externally generated inputs and must never invoke Python, even
+# when timestamps change or make -B is used.
+FSDB_PREBUILT ?= 0
+FSDB_VECTOR_DIR ?= $(BUILD_DIR)
+ifeq ($(FSDB_PREBUILT),1)
+FSDB_PACKET_VECTOR = $(FSDB_VECTOR_DIR)/wave_vectors.txt
+FSDB_AES_VECTOR = $(FSDB_VECTOR_DIR)/aes_vectors.txt
+FSDB_PACKET_VECTOR_DEPS =
+FSDB_AES_VECTOR_DEPS =
+else ifeq ($(FSDB_PREBUILT),0)
+FSDB_PACKET_VECTOR = $(BUILD_DIR)/wave_vectors.txt
+FSDB_AES_VECTOR = $(BUILD_DIR)/aes_vectors.txt
+FSDB_PACKET_VECTOR_DEPS = $(BUILD_DIR)/wave_vectors.txt $(BUILD_DIR)/wave_vectors.cases.txt
+FSDB_AES_VECTOR_DEPS = $(BUILD_DIR)/aes_vectors.txt
+else
+$(error FSDB_PREBUILT must be 0 or 1)
+endif
 VCS_AES_CYCLES = $(if $(filter 0,$(WAVE_AES_LOW_AREA)),5,50)
 VCS_PACKET_BUILD = $(BUILD_DIR)/vcs_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)
 VCS_AES_BUILD = $(BUILD_DIR)/vcs_aes_$(WAVE_AES_LOW_AREA)
@@ -42,14 +60,17 @@ RTL := $(AES_RTL) rtl/mdm_snow3g.v rtl/mdm_zuc.v rtl/mdm_packet_buffer.v \
        rtl/mdm_cipher.v rtl/mdm_integrity.v rtl/mdm_sec.v
 HEADERS := rtl/mdm_sboxes.vh rtl/mdm_aes_sbox.vh
 
-.PHONY: all test example lint test-style test-aes test-fast test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcs-flow wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
+.PHONY: all test example lint test-style test-aes test-fast test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
 all: test
 
-test: lint test-style example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-directed test-vcs-flow
+test: lint test-style example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-directed test-vcs-flow test-u-network
 
-# This verifies command wiring with mocks, not real VCS/PLI or FSDB contents.
+# These verify command wiring with mocks, not real VCS/PLI or FSDB contents.
 test-vcs-flow:
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/test_vcs_fsdb_flow.py
+
+test-u-network:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/test_u_network_flow.py
 
 test-style:
 	$(PYTHON) tests/check_rtl_style.py
@@ -205,22 +226,30 @@ $(VCS_AES_BUILD)/simv: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv Makefile
 	@test -x "$@" || { echo 'VCS did not produce an executable simv'; exit 1; }
 	@touch "$@"
 
-fsdb-packet: $(BUILD_DIR)/wave_vectors.txt $(BUILD_DIR)/wave_vectors.cases.txt $(VCS_PACKET_BUILD)/simv
+# These checks deliberately have no generator prerequisites in prebuilt mode.
+# Missing transferred inputs are errors, never an excuse to regenerate them.
+fsdb-check-packet-vectors: $(FSDB_PACKET_VECTOR_DEPS)
+	@test -r "$(FSDB_PACKET_VECTOR)" -a -s "$(FSDB_PACKET_VECTOR)" || { echo 'Packet vectors missing, unreadable or empty: $(FSDB_PACKET_VECTOR)'; exit 1; }
+
+fsdb-check-aes-vectors: $(FSDB_AES_VECTOR_DEPS)
+	@test -r "$(FSDB_AES_VECTOR)" -a -s "$(FSDB_AES_VECTOR)" || { echo 'AES vectors missing, unreadable or empty: $(FSDB_AES_VECTOR)'; exit 1; }
+
+fsdb-packet: fsdb-check-packet-vectors $(VCS_PACKET_BUILD)/simv
 	@case "$(FSDB_MDA)" in 0|1) ;; *) echo 'FSDB_MDA must be 0 or 1'; exit 1;; esac
 	@mkdir -p "$(FSDB_DIR)"
 	@rm -f "$(FSDB_DIR)/mdm_sec_$(WAVE_VARIANT).fsdb" "$(VCS_PACKET_BUILD)/sim.log"
-	cd "$(VCS_PACKET_BUILD)" && ./simv "+VECTORS=$(abspath $(BUILD_DIR)/wave_vectors.txt)" +DIRECTED_COVERAGE +CASE_LOG \
+	cd "$(VCS_PACKET_BUILD)" && ./simv "+VECTORS=$(abspath $(FSDB_PACKET_VECTOR))" +DIRECTED_COVERAGE +CASE_LOG \
 		"+FSDB=$(abspath $(FSDB_DIR)/mdm_sec_$(WAVE_VARIANT).fsdb)" $(if $(filter 1,$(FSDB_MDA)),+FSDB_MDA,) $(VCS_SIM_FLAGS) -l sim.log
 	@grep -Fq 'DIRECTED configuration MAX_BYTES=$(WAVE_MAX_BYTES) AES_LOW_AREA=$(WAVE_AES_LOW_AREA)' "$(VCS_PACKET_BUILD)/sim.log" || { echo 'Packet VCS parameter mismatch; inspect $(VCS_PACKET_BUILD)/sim.log'; exit 1; }
 	@grep -Fq 'PASS directed waveform cases:' "$(VCS_PACKET_BUILD)/sim.log" && grep -Fq 'PASS 20 packet vectors (MAX_BYTES=$(WAVE_MAX_BYTES))' "$(VCS_PACKET_BUILD)/sim.log" || { echo 'Packet self-check/coverage did not pass; inspect $(VCS_PACKET_BUILD)/sim.log'; exit 1; }
 	@test -s "$(FSDB_DIR)/mdm_sec_$(WAVE_VARIANT).fsdb" || { echo 'Packet FSDB missing or empty; inspect $(VCS_PACKET_BUILD)/sim.log'; exit 1; }
 	@echo 'PASS packet self-check and nonempty FSDB: $(FSDB_DIR)/mdm_sec_$(WAVE_VARIANT).fsdb'
 
-fsdb-aes: $(BUILD_DIR)/aes_vectors.txt $(VCS_AES_BUILD)/simv
-	@test $(WAVE_AES_BLOCKS) -ge 2 -a $(WAVE_AES_BLOCKS) -le $$(wc -l < "$(BUILD_DIR)/aes_vectors.txt") || { echo 'WAVE_AES_BLOCKS must be 2..the number of AES vectors'; exit 1; }
+fsdb-aes: fsdb-check-aes-vectors $(VCS_AES_BUILD)/simv
+	@test $(WAVE_AES_BLOCKS) -ge 2 -a $(WAVE_AES_BLOCKS) -le $$(wc -l < "$(FSDB_AES_VECTOR)") || { echo 'WAVE_AES_BLOCKS must be 2..the number of AES vectors'; exit 1; }
 	@mkdir -p "$(FSDB_DIR)"
 	@rm -f "$(FSDB_DIR)/aes128_$(WAVE_VARIANT).fsdb" "$(VCS_AES_BUILD)/sim.log"
-	cd "$(VCS_AES_BUILD)" && ./simv "+VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)" +LIMIT=$(WAVE_AES_BLOCKS) +CASE_LOG \
+	cd "$(VCS_AES_BUILD)" && ./simv "+VECTORS=$(abspath $(FSDB_AES_VECTOR))" +LIMIT=$(WAVE_AES_BLOCKS) +CASE_LOG \
 		"+FSDB=$(abspath $(FSDB_DIR)/aes128_$(WAVE_VARIANT).fsdb)" $(VCS_SIM_FLAGS) -l sim.log
 	@grep -Fq 'PASS $(WAVE_AES_BLOCKS) AES blocks, $(VCS_AES_CYCLES)-cycle latency/II,' "$(VCS_AES_BUILD)/sim.log" || { echo 'AES self-check or AES_LOW_AREA parameter did not pass; inspect $(VCS_AES_BUILD)/sim.log'; exit 1; }
 	@test -s "$(FSDB_DIR)/aes128_$(WAVE_VARIANT).fsdb" || { echo 'AES FSDB missing or empty; inspect $(VCS_AES_BUILD)/sim.log'; exit 1; }

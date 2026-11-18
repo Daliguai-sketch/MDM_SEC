@@ -2,6 +2,8 @@
 
 此流程直接使用 **VCS 仿真和 Verdi PLI 生成原生 FSDB**，不是把 VCD 改名为 FSDB。包级和 AES 仍运行与 [waveforms.md](waveforms.md) 相同的自检用例；可综合 RTL 无需增加波形代码。验证顶层、输入向量与指定 `/design/tb/` 目录的说明见 [tb_environment.md](tb_environment.md)。
 
+本文是 Python 与 VCS/Verdi 同机运行的开发流程；如果外网生成向量、U 网离线仿真，请使用 [U 网分离测试指南](u_network_test.md) 和 `Makefile.u`，U 网不需要 Python。
+
 ## 环境准备
 
 在 Linux 上配置本地的 VCS、Verdi、有效许可证、Python 3、GNU Make 和 VCS 所需的 C/C++ 编译工具。许可证按本机/公司的既有方式配置即可，不需要提交许可证或密钥。确认工具可用：

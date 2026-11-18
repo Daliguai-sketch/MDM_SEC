@@ -13,6 +13,7 @@
 | `make test-directed`，以及 `make test-directed WAVE_AES_LOW_AREA=0` | PASS：两种 AES 配置各 20 个定向包，覆盖六种模式、认证成功/失败、MAC/明密文依赖等待、原地覆盖保护和同沿读旧值 |
 | `make wave`，以及 `make wave WAVE_AES_LOW_AREA=0` | PASS：两种配置分别生成包和 AES VCD；自检并检查 VCD 内部时间、信号、模式 5 成功/失败事件和 AES 固定答案，见 [waveforms.md](waveforms.md) |
 | `make test-vcs-flow` | PASS：使用模拟工具检查 VCS/Verdi 命令参数、PLI 路径、配置选择和失败处理；**不生成或验证真正的 FSDB** |
+| `make test-u-network` | PASS：7 项转网包及离线流程检查，包括无 Python 的 PATH、`make -B`、传输损坏/缺失和禁止误用目标；VCS/Verdi 为模拟工具，不验证真正的 FSDB |
 | `make example` | PASS：模式 4 AES-CTR/AES-CMAC 命令、输入、响应和输出握手；MAC 和密文另与 PyCryptodome 核对 |
 | `make yosys-check`、`make yosys-check CHECK_MAX_BYTES=65535` | PASS：低面积配置，默认与最大参数的 Verilog 前端、层次展开、优化及 `check -assert` 报告 0 问题；最大容量只检查结构，不将其全部映射成触发器 |
 | `make yosys-check CHECK_MAX_BYTES=65535 CHECK_AES_LOW_AREA=0` | PASS：高速配置、最大容量层次和结构检查 0 问题 |
@@ -29,7 +30,11 @@
 
 AES 固定答案采用 FIPS-197：`000102...0f` 密钥、`001122...ff` 输入、`69c4e0d86a7b0430d8cdb78070b4c55a` 输出；原语测试还覆盖全部 256 个新旧 S-box 值，以及 SNOW 3G、ZUC 已知答案。使用 `python3 -S` 对 AES、默认包、最小容量包、最大容量包和波形定向包的向量生成器重新生成，均与启用 PyCryptodome 的结果逐字节一致。没有 PyCryptodome 时仍会跑参考模型和固定答案，但会跳过其独立交叉检查。
 
-新增 VCS/Verdi FSDB 接口时，使用四态 Icarus 仿真器（WebAssembly 版本）分别运行了低面积和高速配置的 20 个包定向用例、各 8 个 AES 块，均通过；启用 FSDB 宏的两个 bench 也完成了 HDL 编译检查。本次环境没有 VCS、Verdi 及其授权，尚未实际链接 Verdi PLI、生成或打开原生 FSDB；请在本地按 [synopsys_fsdb.md](synopsys_fsdb.md) 运行验证。
+新增 VCS/Verdi FSDB 接口时，使用四态 Icarus 仿真器（WebAssembly 版本）分别运行了低面积和高速配置的 20 个包定向用例、各 8 个 AES 块，均通过；启用 FSDB 宏的两个 bench 也完成了 HDL 编译检查。
+
+新增外网/U 网分离流程时，在外网生成并打包 20 个包向量及 515 个 AES 向量，PyCryptodome 独立 AES 检查通过。将包解压到不含 Python 源码的独立目录后，用 Verilator 分别编译低面积/高速 RTL，两种配置均通过 20 包及全部 515 个 AES 块；之后在 PATH 不含 Python 的环境中运行已编译仿真程序也通过。`make test-u-network` 另用纯 shell 模拟 VCS，证明预生成流程在 PATH 无 Python、强制重编译和向量时间戳变化时不会调用生成器，也不复用旧 `simv`。**模拟 VCS 和 Verilator 不能验证真实 VCS/PLI 或 FSDB**。
+
+本次环境没有 VCS、Verdi 及其授权，也无法访问 U 网的 `/design/tb/`，尚未实际链接 Verdi PLI、生成或打开原生 FSDB；请在 U 网按 [u_network_test.md](u_network_test.md) 运行验证。同机开发流程见 [synopsys_fsdb.md](synopsys_fsdb.md)。
 
 综合结果为通用逻辑/触发器单元数量，不是标准单元面积、SRAM 实际面积、最大频率或签核结果。使用何种 SRAM、端口和读写碰撞语义会显著改变实现；见 [area_optimization.md](area_optimization.md)。
 

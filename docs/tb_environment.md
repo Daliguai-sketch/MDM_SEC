@@ -1,6 +1,8 @@
 # 验证环境说明（本地目录 `/design/tb/`）
 
-本文说明现有仓库的验证顶层、Python 生成与仿真读取的向量、波形和已完成的验证结果。下文假设本机的 `/design/tb/` 可写，并通过 `BUILD_DIR=/design/tb/build/rtl` 将**生成文件**放到该目录；运行命令时，当前目录仍需是包含 `Makefile`、`rtl/`、`tests/` 的仓库根目录。
+本文说明现有仓库的验证顶层、Python 生成与仿真读取的向量、波形和已完成的验证结果。下文的 `make fsdb` 是 **Python 和 VCS 同机**的开发流程。若 Python 在外网、RTL 仿真在 U 网，请改用 [外网生成、U 网离线测试指南](u_network_test.md)，不要在 U 网运行本文的普通 `make fsdb`。
+
+下文假设本机的 `/design/tb/` 可写，并通过 `BUILD_DIR=/design/tb/build/rtl` 将**生成文件**放到该目录；运行命令时，当前目录仍需是包含 `Makefile`、`rtl/`、`tests/` 的仓库根目录。
 
 `/design/tb/` 是用户本机路径，本次运行环境无法访问该目录：下述绝对路径是本地执行命令后的预期位置，并非声称这些文件已在用户机器生成。如果完整仓库本身位于 `/design/tb/`，可以直接在那里运行；否则 testbench 源码仍在仓库的 `tests/rtl/`，不会自动复制到 `/design/tb/`。
 
