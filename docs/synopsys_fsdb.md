@@ -37,7 +37,8 @@ make fsdb VERDI_TAB=/实际路径/novas.tab VERDI_PLI=/实际路径/pli.a
 
 ```sh
 make fsdb                             # 低面积 AES：包级 + AES 块级
-make fsdb WAVE_AES_LOW_AREA=0         # 高速 AES：包级 + AES 块级
+make fsdb WAVE_AES_LOW_AREA=0         # 原高速 AES：包级 + AES 块级
+make fsdb WAVE_AES_LOW_AREA=2         # 5 拍面积优化 AES：包级 + AES 块级
 
 make verdi-packet                     # 打开低面积包级 FSDB 与对应 simv.daidir
 make verdi-aes                        # 打开低面积 AES 块级 FSDB
@@ -59,13 +60,15 @@ verdi -simflow -dbdir build/rtl/vcs_packet_512_1/simv.daidir \
 | `build/rtl/waveforms/aes128_low_area.fsdb` | 低面积 AES 块级测试，默认 8 块 |
 | `build/rtl/waveforms/mdm_sec_fast.fsdb` | `WAVE_AES_LOW_AREA=0` 的包级测试 |
 | `build/rtl/waveforms/aes128_fast.fsdb` | `WAVE_AES_LOW_AREA=0` 的 AES 块级测试 |
+| `build/rtl/waveforms/mdm_sec_balanced.fsdb` | `WAVE_AES_LOW_AREA=2` 的包级测试 |
+| `build/rtl/waveforms/aes128_balanced.fsdb` | `WAVE_AES_LOW_AREA=2` 的 5 拍优化 AES 块级测试 |
 | `build/rtl/vcs_packet_512_1/vcs_compile.log`、`sim.log` | 默认包级编译和仿真日志 |
 | `build/rtl/vcs_aes_1/vcs_compile.log`、`sim.log` | 默认 AES 编译和仿真日志 |
 | `build/rtl/wave_vectors.cases.txt` | 包用例编号、算法、预期 MAC 和名称 |
 
 高速配置的编译目录分别为 `vcs_packet_512_0`、`vcs_aes_0`。FSDB 默认放在 `WAVE_DIR`，也可以单独指定 `FSDB_DIR=build/my-fsdb`。每次仿真会覆盖所选配置的同名 FSDB；更改 `WAVE_MAX_BYTES` 不会改变文件名，需要保留不同容量的结果时应分别指定 `FSDB_DIR`，避免用错与波形不匹配的 `simv.daidir`。`build/` 是生成目录，`make clean` 会删除它，重要波形请先另存。
 
-自检成功应看到 `PASS directed waveform cases`、`PASS 20 packet vectors` 和 `PASS 8 AES blocks`。Make 会确认包级打印的 `MAX_BYTES/AES_LOW_AREA`、AES 的 50/5 拍配置、通过标记以及 FSDB 文件非空，任何一步失败时返回非零；非空检查**不解析 FSDB 内部事件**。可在 Verdi 打开实际波形，也可选用本机 `fsdb2vcd` 导出后检查关键事件：
+自检成功应看到 `PASS directed waveform cases`、`PASS 20 packet vectors` 和 `PASS 8 AES blocks`。Make 会确认包级打印的 `MAX_BYTES/AES_LOW_AREA`、AES 的 50/5/5 拍配置、通过标记以及 FSDB 文件非空，任何一步失败时返回非零；非空检查**不解析 FSDB 内部事件**。可在 Verdi 打开实际波形，也可选用本机 `fsdb2vcd` 导出后检查关键事件：
 
 ```sh
 fsdb2vcd build/rtl/waveforms/mdm_sec_low_area.fsdb -o build/rtl/from_fsdb_packet.vcd

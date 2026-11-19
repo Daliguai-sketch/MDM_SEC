@@ -14,7 +14,7 @@ WAVE_AES_LOW_AREA ?= 1
 WAVE_AES_BLOCKS ?= 8
 WAVE_MAX_BYTES ?= 512
 WAVE_DIR ?= $(BUILD_DIR)/waveforms
-WAVE_VARIANT = $(if $(filter 0,$(WAVE_AES_LOW_AREA)),fast,low_area)
+WAVE_VARIANT = $(if $(filter 0,$(WAVE_AES_LOW_AREA)),fast,$(if $(filter 2,$(WAVE_AES_LOW_AREA)),balanced,low_area))
 
 # Optional Synopsys VCS/Verdi flow. VERDI_HOME or NOVAS_HOME may point to
 # different releases; users can also pass VERDI_PLI_DIR or the two files directly.
@@ -46,7 +46,7 @@ FSDB_AES_VECTOR_DEPS = $(BUILD_DIR)/aes_vectors.txt
 else
 $(error FSDB_PREBUILT must be 0 or 1)
 endif
-VCS_AES_CYCLES = $(if $(filter 0,$(WAVE_AES_LOW_AREA)),5,50)
+VCS_AES_CYCLES = $(if $(filter 1,$(WAVE_AES_LOW_AREA)),50,5)
 VCS_PACKET_BUILD = $(BUILD_DIR)/vcs_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)
 VCS_AES_BUILD = $(BUILD_DIR)/vcs_aes_$(WAVE_AES_LOW_AREA)
 
@@ -55,15 +55,15 @@ VCS_AES_BUILD = $(BUILD_DIR)/vcs_aes_$(WAVE_AES_LOW_AREA)
 VMAKEFLAGS ?= $(if $(findstring verilator-cli,$(notdir $(VERILATOR))),CFG_CXXFLAGS_PCH_I=-include,)
 
 AES_RTL := rtl/mdm_aes_sbox.v rtl/mdm_aes_blocks.v rtl/mdm_aes128_serial.v \
-           rtl/mdm_aes128_fast.v rtl/mdm_aes128.v
+           rtl/mdm_aes128_fast.v rtl/mdm_aes128_balanced.v rtl/mdm_aes128.v
 RTL := $(AES_RTL) rtl/mdm_snow3g.v rtl/mdm_zuc.v rtl/mdm_packet_buffer.v \
        rtl/mdm_cipher.v rtl/mdm_integrity.v rtl/mdm_sec.v
-HEADERS := rtl/mdm_sboxes.vh rtl/mdm_aes_sbox.vh
+HEADERS := rtl/mdm_sboxes.vh rtl/mdm_aes_sbox.vh rtl/mdm_aes_mix_balanced.vh
 
-.PHONY: all test example lint test-style test-aes test-fast test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
+.PHONY: all test example lint test-style test-specs test-aes test-fast test-balanced test-aes-formal area-aes-balanced test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
 all: test
 
-test: lint test-style example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-directed test-vcs-flow test-u-network
+test: lint test-style test-specs example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-balanced test-directed test-vcs-flow test-u-network
 
 # These verify command wiring with mocks, not real VCS/PLI or FSDB contents.
 test-vcs-flow:
@@ -74,6 +74,10 @@ test-u-network:
 
 test-style:
 	$(PYTHON) tests/check_rtl_style.py
+
+# DOCX integrity, source/RTL interface consistency; uses Python stdlib only.
+test-specs:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/test_rtl_specs.py
 
 # Small self-checking integration example; the testbench is simulation-only.
 $(BUILD_DIR)/tb_quickstart/Vtb_mdm_sec_quickstart: $(RTL) $(HEADERS) examples/tb_mdm_sec_quickstart.sv
@@ -88,6 +92,7 @@ lint:
 	@test -n "$(VERILATOR)" || { echo 'Install Verilator (or set VERILATOR=...)'; exit 1; }
 	$(VERILATOR) --language 1364-2005 --lint-only -Irtl --top-module mdm_sec $(RTL)
 	$(VERILATOR) --language 1364-2005 --lint-only -Irtl --top-module mdm_sec -GAES_LOW_AREA=0 $(RTL)
+	$(VERILATOR) --language 1364-2005 --lint-only -Irtl --top-module mdm_sec -GAES_LOW_AREA=2 $(RTL)
 
 $(BUILD_DIR)/aes_vectors.txt: tests/gen_aes_vectors.py tests/reference_model.py sec_core/aes/sec_aes_core_enc.py
 	@mkdir -p $(@D)
@@ -103,9 +108,15 @@ $(BUILD_DIR)/tb_aes_fast/Vtb_aes_random: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_
 	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
 		--top-module tb_aes_random -GTEST_AES_LOW_AREA=0 --Mdir $(abspath $(@D)) $(AES_RTL) tests/rtl/tb_aes_random.sv
 
-test-aes: $(BUILD_DIR)/aes_vectors.txt $(BUILD_DIR)/tb_aes_small/Vtb_aes_random $(BUILD_DIR)/tb_aes_fast/Vtb_aes_random
+$(BUILD_DIR)/tb_aes_balanced/Vtb_aes_random: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_aes_random -GTEST_AES_LOW_AREA=2 --Mdir $(abspath $(@D)) $(AES_RTL) tests/rtl/tb_aes_random.sv
+
+test-aes: $(BUILD_DIR)/aes_vectors.txt $(BUILD_DIR)/tb_aes_small/Vtb_aes_random $(BUILD_DIR)/tb_aes_fast/Vtb_aes_random $(BUILD_DIR)/tb_aes_balanced/Vtb_aes_random
 	$(BUILD_DIR)/tb_aes_small/Vtb_aes_random +VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)
 	$(BUILD_DIR)/tb_aes_fast/Vtb_aes_random +VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)
+	$(BUILD_DIR)/tb_aes_balanced/Vtb_aes_random +VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)
 
 $(BUILD_DIR)/tb_primitives/Vtb_primitives: $(RTL) $(HEADERS) tests/rtl/tb_primitives.sv
 	@mkdir -p $(@D)
@@ -162,7 +173,7 @@ $(BUILD_DIR)/wave_vectors.cases.txt: $(BUILD_DIR)/wave_vectors.txt
 
 $(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv Makefile
 	@test -n "$(VERILATOR)" || { echo 'Install Verilator (or set VERILATOR=...)'; exit 1; }
-	@case "$(WAVE_AES_LOW_AREA)" in 0|1) ;; *) echo 'WAVE_AES_LOW_AREA must be 0 or 1'; exit 1;; esac
+	@case "$(WAVE_AES_LOW_AREA)" in 0|1|2) ;; *) echo 'WAVE_AES_LOW_AREA must be 0, 1 or 2'; exit 1;; esac
 	@test $(WAVE_MAX_BYTES) -ge 512 -a $(WAVE_MAX_BYTES) -le 65535 || { echo 'WAVE_MAX_BYTES must be 512..65535 for the directed suite'; exit 1; }
 	@mkdir -p $(@D)
 	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing --trace --trace-depth 4 -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
@@ -175,7 +186,7 @@ test-directed: $(BUILD_DIR)/wave_vectors.txt $(BUILD_DIR)/wave_vectors.cases.txt
 # VCD files are written only by explicit waveform targets, not normal tests.
 $(BUILD_DIR)/tb_wave_aes_$(WAVE_AES_LOW_AREA)/Vtb_aes_random: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv Makefile
 	@test -n "$(VERILATOR)" || { echo 'Install Verilator (or set VERILATOR=...)'; exit 1; }
-	@case "$(WAVE_AES_LOW_AREA)" in 0|1) ;; *) echo 'WAVE_AES_LOW_AREA must be 0 or 1'; exit 1;; esac
+	@case "$(WAVE_AES_LOW_AREA)" in 0|1|2) ;; *) echo 'WAVE_AES_LOW_AREA must be 0, 1 or 2'; exit 1;; esac
 	@mkdir -p $(@D)
 	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing --trace -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
 		--top-module tb_aes_random -GTEST_AES_LOW_AREA=$(WAVE_AES_LOW_AREA) --Mdir $(abspath $(@D)) $(AES_RTL) tests/rtl/tb_aes_random.sv
@@ -204,7 +215,7 @@ wave: wave-packet wave-aes
 # csrc, simv.daidir, KDB and logs in separate configuration-specific folders.
 $(VCS_PACKET_BUILD)/simv: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv Makefile
 	@command -v "$(VCS)" >/dev/null 2>&1 || { echo 'Install/configure VCS (or set VCS=/absolute/path/to/vcs)'; exit 1; }
-	@case "$(WAVE_AES_LOW_AREA)" in 0|1) ;; *) echo 'WAVE_AES_LOW_AREA must be 0 or 1'; exit 1;; esac
+	@case "$(WAVE_AES_LOW_AREA)" in 0|1|2) ;; *) echo 'WAVE_AES_LOW_AREA must be 0, 1 or 2'; exit 1;; esac
 	@test $(WAVE_MAX_BYTES) -ge 512 -a $(WAVE_MAX_BYTES) -le 65535 || { echo 'WAVE_MAX_BYTES must be 512..65535 for the directed suite'; exit 1; }
 	@if [ ! -f "$(VERDI_TAB)" ] || [ ! -f "$(VERDI_PLI)" ]; then echo 'Verdi PLI not found: set VERDI_HOME/NOVAS_HOME, VERDI_PLI_DIR, or VERDI_TAB and VERDI_PLI'; exit 1; fi
 	@mkdir -p "$(@D)"
@@ -217,7 +228,7 @@ $(VCS_PACKET_BUILD)/simv: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv Makefile
 
 $(VCS_AES_BUILD)/simv: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv Makefile
 	@command -v "$(VCS)" >/dev/null 2>&1 || { echo 'Install/configure VCS (or set VCS=/absolute/path/to/vcs)'; exit 1; }
-	@case "$(WAVE_AES_LOW_AREA)" in 0|1) ;; *) echo 'WAVE_AES_LOW_AREA must be 0 or 1'; exit 1;; esac
+	@case "$(WAVE_AES_LOW_AREA)" in 0|1|2) ;; *) echo 'WAVE_AES_LOW_AREA must be 0, 1 or 2'; exit 1;; esac
 	@if [ ! -f "$(VERDI_TAB)" ] || [ ! -f "$(VERDI_PLI)" ]; then echo 'Verdi PLI not found: set VERDI_HOME/NOVAS_HOME, VERDI_PLI_DIR, or VERDI_TAB and VERDI_PLI'; exit 1; fi
 	@mkdir -p "$(@D)"
 	cd "$(@D)" && "$(VCS)" $(VCS_FLAGS) $(VCS_EXTRA_FLAGS) +define+MDM_SEC_FSDB \
@@ -327,6 +338,27 @@ $(BUILD_DIR)/tb_boundaries_fast/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_mdm_
 	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
 		--top-module tb_mdm_sec -GTEST_AES_LOW_AREA=0 -GTEST_MAX_BYTES=65535 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_mdm_sec.sv
 
+
+$(BUILD_DIR)/tb_primitives_balanced/Vtb_primitives: $(RTL) $(HEADERS) tests/rtl/tb_primitives.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_primitives -GTEST_AES_LOW_AREA=2 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_primitives.sv
+
+$(BUILD_DIR)/tb_lanes_balanced/Vtb_lanes: $(RTL) $(HEADERS) tests/rtl/tb_lanes.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_lanes -GTEST_AES_LOW_AREA=2 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_lanes.sv
+
+$(BUILD_DIR)/tb_packet_balanced/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_mdm_sec -GTEST_AES_LOW_AREA=2 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_mdm_sec.sv
+
+$(BUILD_DIR)/tb_boundaries_balanced/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_mdm_sec -GTEST_AES_LOW_AREA=2 -GTEST_MAX_BYTES=65535 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_mdm_sec.sv
+
 # Check that selecting the legacy five-cycle AES propagates through both lanes
 # and the top level, including all six packet modes and maximum-size wrap.
 test-fast: $(BUILD_DIR)/packet_vectors.txt $(BUILD_DIR)/boundary_vectors.txt $(BUILD_DIR)/tb_primitives_fast/Vtb_primitives \
@@ -335,6 +367,30 @@ test-fast: $(BUILD_DIR)/packet_vectors.txt $(BUILD_DIR)/boundary_vectors.txt $(B
 	$(BUILD_DIR)/tb_lanes_fast/Vtb_lanes
 	$(BUILD_DIR)/tb_packet_fast/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/packet_vectors.txt) +REQUIRE_PARALLEL_COVERAGE
 	$(BUILD_DIR)/tb_boundaries_fast/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/boundary_vectors.txt)
+
+# Full end-to-end regression for the third AES option; does not replace the
+# legacy fast or low-area tests and continues to use independent lane cores.
+test-balanced: $(BUILD_DIR)/packet_vectors.txt $(BUILD_DIR)/boundary_vectors.txt $(BUILD_DIR)/tb_primitives_balanced/Vtb_primitives \
+               $(BUILD_DIR)/tb_lanes_balanced/Vtb_lanes $(BUILD_DIR)/tb_packet_balanced/Vtb_mdm_sec $(BUILD_DIR)/tb_boundaries_balanced/Vtb_mdm_sec
+	$(BUILD_DIR)/tb_primitives_balanced/Vtb_primitives +SBOX=$(abspath tests/rtl/aes_sbox.hex)
+	$(BUILD_DIR)/tb_lanes_balanced/Vtb_lanes
+	$(BUILD_DIR)/tb_packet_balanced/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/packet_vectors.txt) +REQUIRE_PARALLEL_COVERAGE
+	$(BUILD_DIR)/tb_boundaries_balanced/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/boundary_vectors.txt)
+
+# Formal checks use async2sync's reset model; target gate-level and asynchronous
+# reset sign-off remain the integrator's responsibility.
+test-aes-formal:
+	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
+	@mkdir -p $(BUILD_DIR)
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl tests/formal/aes_mix_miter.v; prep -top aes_mix_miter; sat -verify -prove mismatch 0' > $(BUILD_DIR)/aes-mix-formal.log
+	@grep -q 'SAT proof finished - no model found: SUCCESS' $(BUILD_DIR)/aes-mix-formal.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl rtl/mdm_aes128_fast.v rtl/mdm_aes128_balanced.v; proc; opt_clean; equiv_make mdm_aes128_fast mdm_aes128_balanced equiv; hierarchy -top equiv; async2sync; equiv_simple; equiv_status -assert' > $(BUILD_DIR)/aes-balanced-equiv.log
+	@grep -q 'Equivalence successfully proven' $(BUILD_DIR)/aes-balanced-equiv.log
+	@echo 'PASS MixColumns SAT and fast/balanced AES equivalence (async2sync reset model)'
+
+area-aes-balanced:
+	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
+	$(PYTHON) tests/compare_aes_balanced_area.py --yosys "$(YOSYS)" --output "$(BUILD_DIR)/aes-balanced-area"
 
 yosys-check:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
@@ -352,7 +408,7 @@ yosys-parameters:
 		fi; \
 		grep -q 'ERROR: System task' $(BUILD_DIR)/invalid-$$value.log || { cat $(BUILD_DIR)/invalid-$$value.log; exit 1; }; \
 	done
-	@for value in 2 3; do \
+	@for value in 3 4; do \
 		if $(YOSYS) -Q -T -p "read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam AES_LOW_AREA $$value" > $(BUILD_DIR)/invalid-aes-$$value.log 2>&1; then \
 			echo "FAIL: AES_LOW_AREA=$$value was accepted"; exit 1; \
 		fi; \

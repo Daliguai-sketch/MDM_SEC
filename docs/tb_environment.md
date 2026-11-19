@@ -23,7 +23,7 @@ tb_mdm_sec                      仿真 testbench（产生激励、检查结果�
     └── u_integrity             完整性通道（含 u_aes、u_snow、u_zuc）
 ```
 
-`tb_aes_random` 是另一个独立仿真，不是 `tb_mdm_sec` 的子模块。默认波形包仿真使用 `TEST_MAX_BYTES=512`、`TEST_AES_LOW_AREA=1`，以减小仿真规模；RTL 自身的默认 `MAX_BYTES` 为 2048。`WAVE_AES_LOW_AREA=0` 选择高速 AES。
+`tb_aes_random` 是另一个独立仿真，不是 `tb_mdm_sec` 的子模块。默认波形包仿真使用 `TEST_MAX_BYTES=512`、`TEST_AES_LOW_AREA=1`，以减小仿真规模；RTL 自身的默认 `MAX_BYTES` 为 2048。`WAVE_AES_LOW_AREA=0` 选择原高速 AES，`WAVE_AES_LOW_AREA=2` 选择新的 5 拍优化 AES。
 
 ## 执行及目录
 
@@ -107,9 +107,9 @@ PyCryptodome 是可选依赖；存在时进一步独立检查 AES，缺少时仍
 
 ## 已有结果与本机需确认的结果
 
-- 已在 Verilator 上完成完整回归：大规模包用例 **5546 个**（低面积 2641+240+12，高速 2641+12），以及默认 20 个低面积定向包；高速配置的 20 个定向包也单独通过。
-- AES 完整回归两种配置各 **515 块**通过；原语延迟/最早启动间隔为低面积 **50 拍**、高速 **5 拍**，并非整包延迟。
-- 四态 Icarus 仿真分别通过两种配置的 20 个定向包和各 8 个 AES 块；其中用例 11 的 `MAC=12a10d82`、`RX=12a10d82`、`match=1`，用例 12 的 `RX=12a10d83`、`match=0`。
+- 已在 Verilator 上完成完整回归：大规模包用例 **8199 次**（低面积 2641+240+12，原高速和 5 拍优化版各 2641+12），以及默认 20 个低面积定向包；原高速和优化配置的 20 个定向包也分别通过。
+- AES 完整回归三种配置各 **515 块**通过；原语延迟/最早启动间隔为低面积 **50 拍**、原高速和优化版均 **5 拍**，并非整包延迟。
+- 四态 Icarus WebAssembly 仿真分别通过三种配置各 20 个定向包和 8 个 AES 块；其中用例 11 的 `MAC=12a10d82`、`RX=12a10d82`、`match=1`，用例 12 的 `RX=12a10d83`、`match=0`。5 拍优化版使用 U 网包内的 RTL 和 testbench，在内存中将 bench 的参数默认值改为 2；FSDB 宏仅做 HDL 编译，不执行 PLI。
 - 当前执行环境没有 VCS/Verdi，**没有在这里实测真实 VCS 编译或生成真实 FSDB**。前述结果不能代替您本机 Synopsys 工具的验证。
 
 本机 `make fsdb` 正常完成后，整包 `sim.log` 应出现 `DIRECTED configuration MAX_BYTES=512 AES_LOW_AREA=1`、`PASS directed waveform cases` 和 `PASS 20 packet vectors`；AES `sim.log` 应出现 `PASS 8 AES blocks, 50-cycle latency/II`。Make 检查自检日志和 FSDB 非空，但不解析 FSDB 中每个事件；请用 Verdi 实际查看，或参考 [synopsys_fsdb.md](synopsys_fsdb.md) 的 `fsdb2vcd` 检查方法。

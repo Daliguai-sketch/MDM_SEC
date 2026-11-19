@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the four checked-in RTL design specifications to editable DOCX.
+"""Render the checked-in RTL design specifications to editable DOCX.
 
 Requires python-docx and Pillow. Source text is in docs/specs/src; figures are
 rendered locally from simple vectors and embedded in the resulting documents.
@@ -27,6 +27,7 @@ RTL_BASELINE = "938ac3409dbcf2c2bc4244f4b3d60f1b19da0c4c"
 DATE = "2026-11-17"
 DOCUMENTS = {
     "aes_core_spec": ("AES_CORE", "mdm_aes128 · AES-128 加密块原语", "aes"),
+    "aes_balanced_core_spec": ("AES_BALANCED_CORE", "mdm_aes128_balanced · 5 拍面积优化 AES-128 原语", "aes_balanced"),
     "snow3g_core_spec": ("SNOW3G_CORE", "mdm_snow3g · SNOW 3G 密钥流原语", "snow"),
     "zuc_core_spec": ("ZUC_CORE", "mdm_zuc · ZUC-128 密钥流原语", "zuc"),
     "mdm_sec_spec": ("MDM_SEC", "mdm_sec · 包级安全处理顶层", "mdm"),
@@ -296,17 +297,37 @@ def canvas(title, subtitle):
 
 
 def diagram_aes():
-    image, draw = canvas("AES-128 block core", "Parameter selection is static at elaboration; only one implementation is instantiated")
-    arrow(draw, [(370, 455), (435, 455)])
-    arrow(draw, [(755, 425), (805, 425), (805, 290), (865, 290)])
-    arrow(draw, [(755, 485), (805, 485), (805, 650), (865, 650)])
-    arrow(draw, [(1375, 290), (1425, 290), (1425, 410), (1480, 410)])
-    arrow(draw, [(1375, 650), (1425, 650), (1425, 520), (1480, 520)])
-    draw_box(draw, (40, 300, 370, 620), "Request interface", ["key / block_in: 128b", "start and ready", "single block transaction"], "#E4F1F4")
-    draw_box(draw, (435, 350, 755, 550), "Generate select", ["AES_LOW_AREA", "compile-time 1 or 0"], "#FFF1D8")
-    draw_box(draw, (865, 170, 1375, 410), "Serial core  |  50 cycles", ["4 shared S-boxes", "1 key + 4 column cycles / round", "10 rounds; II = 50"], "#E7F3EC")
-    draw_box(draw, (865, 530, 1375, 770), "Fast core  |  5 cycles", ["2 rounds per cycle", "combinational key expansion", "10 rounds; II = 5"], "#E8EEF9")
-    draw_box(draw, (1480, 320, 1760, 620), "Result interface", ["done pulse", "block_out: 128b", "busy / ready"], "#E4F1F4")
+    image, draw = canvas("AES-128 block core", "Static parameter selection; one AES implementation is instantiated per lane")
+    arrow(draw, [(320, 470), (385, 470)])
+    for y in (255, 475, 695):
+        arrow(draw, [(685, 470), (730, 470), (730, y), (790, y)])
+        arrow(draw, [(1350, y), (1400, y), (1400, 470), (1480, 470)])
+    draw_box(draw, (35, 325, 320, 615), "Request", ["key / block: 128b", "start and ready", "single block"], "#E4F1F4")
+    draw_box(draw, (385, 355, 685, 585), "Generate select", ["AES_LOW_AREA", "static 1 / 0 / 2"], "#FFF1D8")
+    draw_box(draw, (790, 175, 1350, 335), "Serial  |  1  |  50 cycles", ["4 shared S-boxes", "10 rounds; II = 50"], "#E7F3EC")
+    draw_box(draw, (790, 395, 1350, 555), "Original fast  |  0  |  5 cycles", ["2 rounds per cycle", "10 rounds; II = 5"], "#E8EEF9")
+    draw_box(draw, (790, 615, 1350, 775), "Area-optimized  |  2  |  5 cycles", ["shared-XOR MixColumns", "10 rounds; II = 5"], "#E8EEF9")
+    draw_box(draw, (1480, 325, 1760, 615), "Result", ["done pulse", "block_out: 128b", "busy / ready"], "#E4F1F4")
+    return image
+
+
+def diagram_aes_balanced():
+    image, draw = canvas("AES-128 area-optimized core", "One block per 5 cycles; both rounds are combinational between state registers")
+    arrow(draw, [(285, 495), (350, 495)])
+    arrow(draw, [(620, 495), (720, 495)])
+    arrow(draw, [(1010, 495), (1100, 495)])
+    arrow(draw, [(1400, 495), (1485, 495)])
+    arrow(draw, [(1400, 590), (1440, 590), (1440, 755), (485, 755), (485, 625)])
+    arrow(draw, [(620, 400), (660, 400), (660, 255), (720, 255)])
+    arrow(draw, [(880, 335), (880, 400)])
+    arrow(draw, [(1250, 335), (1250, 400)])
+    draw_box(draw, (35, 365, 285, 625), "Request", ["key / block_in", "start / ready", "128b"], "#E4F1F4")
+    draw_box(draw, (350, 365, 620, 625), "Registers", ["round_state", "key_reg / rcon", "pair 0 to 4"], "#FFF1D8")
+    draw_box(draw, (720, 175, 1400, 335), "Two-round key expansion", ["key1 then factored key2", "8 S-boxes, online per block"], "#E7F3EC")
+    draw_box(draw, (720, 400, 1010, 590), "Round 1", ["16 S-boxes", "MixColumns", "AddRoundKey"], "#E8EEF9")
+    draw_box(draw, (1100, 400, 1400, 590), "Round 2", ["16 S-boxes", "MixColumns bypass", "when pair = 4"], "#E8EEF9")
+    draw_box(draw, (1485, 365, 1760, 625), "Result", ["done on E5", "block_out: 128b", "next request on E5"], "#E4F1F4")
+    draw.text((700, 775), "feedback after rounds 2, 4, 6 and 8", fill="#527287", font=image_font(23))
     return image
 
 
@@ -367,8 +388,8 @@ def diagram_mdm():
 
 
 def diagram_bytes(name):
-    image = {"aes": diagram_aes, "snow": diagram_snow,
-             "zuc": diagram_zuc, "mdm": diagram_mdm}[name]()
+    image = {"aes": diagram_aes, "aes_balanced": diagram_aes_balanced,
+             "snow": diagram_snow, "zuc": diagram_zuc, "mdm": diagram_mdm}[name]()
     output = BytesIO()
     image.save(output, format="PNG", optimize=True)
     output.seek(0)
@@ -377,7 +398,8 @@ def diagram_bytes(name):
 
 def add_figure(doc, kind):
     captions = {
-        "aes": "图 1  AES-128 包装器及静态选择的两种微架构",
+        "aes": "图 1  AES-128 包装器及静态选择的三种微架构",
+        "aes_balanced": "图 1  5 拍面积优化 AES-128 数据路径与轮密钥扩展",
         "snow": "图 1  SNOW 3G 原语顶层数据及反馈关系",
         "zuc": "图 1  ZUC-128 原语顶层数据及反馈关系",
         "mdm": "图 1  MDM_SEC 包级顶层结构与两条独立通道",
@@ -458,7 +480,7 @@ def add_bookmark(paragraph, name, identifier):
     paragraph._p.append(end)
 
 
-def prepare_document(name, subtitle, source_hash, outline):
+def prepare_document(name, subtitle, source_hash, outline, rtl_baseline=RTL_BASELINE):
     doc = Document()
     section = doc.sections[0]
     section.page_width, section.page_height = Cm(21.0), Cm(29.7)
@@ -487,7 +509,7 @@ def prepare_document(name, subtitle, source_hash, outline):
     props.created = datetime(2026, 11, 17)
     props.modified = datetime(2026, 11, 17)
     props.revision = 1
-    props.comments = "Draft; derived from RTL baseline " + RTL_BASELINE
+    props.comments = "Draft; RTL baseline " + rtl_baseline
 
     top = doc.add_paragraph()
     top.paragraph_format.space_before = Pt(34)
@@ -506,7 +528,7 @@ def prepare_document(name, subtitle, source_hash, outline):
         ["Document Control", "Value"],
         ["版本 / 状态", "V0.1 / Draft — 待评审，非工艺与安全签核"],
         ["编制日期", DATE],
-        ["RTL 基线提交", RTL_BASELINE],
+        ["RTL 基线提交", rtl_baseline],
         ["编制 / 审核 / 批准", "TBD / TBD / TBD"],
         ["内容源 SHA-256", source_hash[:32] + "\n" + source_hash[32:]],
     ])
@@ -568,7 +590,7 @@ def render_markdown(doc, source):
             add_code(doc, block)
             i += 1
             continue
-        marker = re.fullmatch(r"\[\[DIAGRAM:(aes|snow|zuc|mdm)\]\]", line.strip())
+        marker = re.fullmatch(r"\[\[DIAGRAM:(aes|aes_balanced|snow|zuc|mdm)\]\]", line.strip())
         if marker:
             add_figure(doc, marker.group(1))
             i += 1
@@ -624,15 +646,25 @@ def save_reproducible(doc, path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", default=str(ROOT / "docs/specs"))
+    parser.add_argument("--only", action="append", choices=DOCUMENTS,
+                        help="render only this document (repeat to select several)")
     args = parser.parse_args()
     output = Path(args.output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     for stem, (name, subtitle, kind) in DOCUMENTS.items():
+        if args.only and stem not in args.only:
+            continue
         source_path = SOURCE_DIR / (stem + ".md")
         data = source_path.read_bytes()
         source = data.decode("utf-8")
+        # The optimized core is new; its exact RTL is the one committed with
+        # this specification, not the older baseline used by the other specs.
+        if stem in ("aes_core_spec", "aes_balanced_core_spec", "mdm_sec_spec"):
+            baseline = "本文档所在 Git 提交的 RTL"
+        else:
+            baseline = RTL_BASELINE
         doc = prepare_document(name, subtitle, hashlib.sha256(data).hexdigest(),
-                               heading_outline(source))
+                               heading_outline(source), baseline)
         render_markdown(doc, source)
         path = output / (stem + ".docx")
         save_reproducible(doc, path)

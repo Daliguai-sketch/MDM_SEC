@@ -66,7 +66,7 @@ if meta['top'] == 'tb_mdm_sec':
 else:
     count = next(x.split('=',1)[1] for x in args if x.startswith('+LIMIT='))
     variant = next(x.split('=',1)[1] for x in meta['args'] if x.startswith('-pvalue+tb_aes_random.TEST_AES_LOW_AREA='))
-    cycles = 5 if variant == '0' else 50
+    cycles = 50 if variant == '1' else 5
     if mode == 'wrong_config':
         cycles = 50 if cycles == 5 else 5
     result = f'PASS {count} AES blocks, {cycles}-cycle latency/II, mock\n'
@@ -150,6 +150,19 @@ class VcsFsdbFlowTests(unittest.TestCase):
             args = json.loads((directory / "verdi_args.json").read_text())
             self.assertEqual(args[args.index("-ssf")+1], str(self.wave / filename))
 
+    def test_balanced_variant_flags_and_wave_names(self):
+        options = ("WAVE_AES_LOW_AREA=2", "WAVE_AES_BLOCKS=2")
+        self.make("-j", "2", "fsdb", *options)
+        packet = self.build / "vcs_packet_512_2"
+        aes = self.build / "vcs_aes_2"
+        self.assertIn("-pvalue+tb_mdm_sec.TEST_AES_LOW_AREA=2",
+                      json.loads((packet / "compile_args.json").read_text()))
+        self.assertIn("-pvalue+tb_aes_random.TEST_AES_LOW_AREA=2",
+                      json.loads((aes / "compile_args.json").read_text()))
+        self.assertIn("PASS 2 AES blocks, 5-cycle latency/II", (aes / "sim.log").read_text())
+        self.assertTrue((self.wave / "mdm_sec_balanced.fsdb").is_file())
+        self.assertTrue((self.wave / "aes128_balanced.fsdb").is_file())
+
     def test_lowercase_pli_and_default_variant(self):
         lower_home = self.home / "novas"
         lower = lower_home / "share/PLI/VCS/linux64"
@@ -225,8 +238,8 @@ class VcsFsdbFlowTests(unittest.TestCase):
                       self.make("fsdb-aes", "WAVE_AES_LOW_AREA=0", ok=False, env=env))
 
     def test_parameter_guards(self):
-        self.assertIn("WAVE_AES_LOW_AREA must be 0 or 1",
-                      self.make("fsdb-packet", "WAVE_AES_LOW_AREA=2", ok=False))
+        self.assertIn("WAVE_AES_LOW_AREA must be 0, 1 or 2",
+                      self.make("fsdb-packet", "WAVE_AES_LOW_AREA=3", ok=False))
         self.assertIn("WAVE_MAX_BYTES must be 512..65535",
                       self.make("fsdb-packet", "WAVE_MAX_BYTES=511", ok=False))
         self.assertIn("FSDB_MDA must be 0 or 1",

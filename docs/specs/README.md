@@ -1,10 +1,11 @@
 # RTL 设计规格书
 
-四份可编辑的 Word 文档基于 RTL 提交 `938ac3409dbcf2c2bc4244f4b3d60f1b19da0c4c` 编制，状态均为 **V0.1 Draft，待评审**：
+五份可编辑的 Word 文档状态均为 **V0.1 Draft，待评审**。SNOW/ZUC 文档基于 RTL 提交 `938ac3409dbcf2c2bc4244f4b3d60f1b19da0c4c`；AES 和顶层文档已更新，以与文档同一 Git 提交中的 RTL 为准：
 
 | 文档 | 对应实际 Verilog 模块 | 内容范围 |
 |---|---|---|
-| [aes_core_spec.docx](aes_core_spec.docx) | `mdm_aes128` | AES-128 加密原语及 50/5 拍两种实现 |
+| [aes_core_spec.docx](aes_core_spec.docx) | `mdm_aes128` | AES-128 包装器及 50/5/5 拍三种实现 |
+| [aes_balanced_core_spec.docx](aes_balanced_core_spec.docx) | `mdm_aes128_balanced` | 新增 5 拍面积优化 AES 核的架构、接口、验证和 PPA 限制 |
 | [snow3g_core_spec.docx](snow3g_core_spec.docx) | `mdm_snow3g` | SNOW 3G 密钥流、初始化及暂停协议 |
 | [zuc_core_spec.docx](zuc_core_spec.docx) | `mdm_zuc` | ZUC-128 密钥流、初始化及暂停协议 |
 | [mdm_sec_spec.docx](mdm_sec_spec.docx) | `mdm_sec` | 六种包模式、两条独立算法通道、共享缓冲及顶层接口 |
@@ -20,6 +21,8 @@
 ```sh
 python3 -m pip install -r docs/specs/requirements.txt
 python3 tools/generate_rtl_specs.py
+# 或只生成某一份，避免覆盖其他 Word 文档：
+python3 tools/generate_rtl_specs.py --only aes_balanced_core_spec
 python3 tests/test_rtl_specs.py
 ```
 

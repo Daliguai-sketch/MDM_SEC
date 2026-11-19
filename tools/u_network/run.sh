@@ -39,7 +39,8 @@ Environment overrides:
   BSUB_CMD            Blocking launcher and options, e.g. 'bsub -K -q QUEUE';
                       an empty value means direct. If unset, bsub_cmd is used
                       when available, otherwise execution is direct.
-  AES_LOW_AREA        1 (default, 50 cycles) or 0 (fast, 5 cycles)
+  AES_LOW_AREA        1 (default, 50 cycles), 0 (fast, 5 cycles), or
+                      2 (area-optimized, 5 cycles)
   RUN_FULL            1 (default) runs 2641 packets; 0 skips that regression
   RUN_AES             1 (default) runs AES block test; 0 skips it
   AES_BLOCKS          AES block count for RUN_AES=1, 2..515 (default 8)
@@ -83,7 +84,9 @@ RUN_AES=${RUN_AES:-1}
 FSDB_FULL=${FSDB_FULL:-0}
 FSDB_MDA=${FSDB_MDA:-0}
 AES_BLOCKS=${AES_BLOCKS:-8}
-for name in AES_LOW_AREA RUN_FULL RUN_AES FSDB_FULL FSDB_MDA; do
+[[ $AES_LOW_AREA == 0 || $AES_LOW_AREA == 1 || $AES_LOW_AREA == 2 ]] ||
+    die 'AES_LOW_AREA must be 0, 1 or 2'
+for name in RUN_FULL RUN_AES FSDB_FULL FSDB_MDA; do
     value=${!name}
     [[ $value == 0 || $value == 1 ]] || die "$name must be 0 or 1"
 done
@@ -103,6 +106,7 @@ require_file "$TB_DIR/tb_mdm_sec.sv"
 require_file "$VC_DIR/mdm_sec_rtl.vc"
 require_file "$VC_DIR/mdm_sboxes.vh"
 require_file "$VC_DIR/mdm_aes_sbox.vh"
+require_file "$VC_DIR/mdm_aes_mix_balanced.vh"
 while IFS= read -r rtl_path || [[ -n $rtl_path ]]; do
     case $rtl_path in
         ../vc/*.v) require_file "$VC_DIR/${rtl_path#../vc/}" ;;

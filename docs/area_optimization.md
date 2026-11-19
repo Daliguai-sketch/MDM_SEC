@@ -13,7 +13,22 @@
 | 顶层，保留 5 拍高速 AES | 157,502 | 117,931 | -25.12% |
 | 两份缓存的存储位 → 一份缓存的存储位（含 bank 填充） | 32,896 | 16,512 | -49.81% |
 
-顶层有**两个独立 AES**，分别用于加密和完整性，并未将这两路合并。上表单核的减少量不能直接等同整机百分比；两处变化以整机实际综合结果为准。
+顶层有**两个独立 AES**，分别用于加密和完整性，并未将这两路合并。上表是先前的低面积及原高速实现的历史对比，单核的减少量不能直接等同整机百分比；两处变化以整机实际综合结果为准。
+
+### 新增 5 拍面积优化版本
+
+`AES_LOW_AREA=2` 新增 `mdm_aes128_balanced`，保留原高速核的两轮/拍、5 拍延迟和最小 5 拍启动间隔；末拍可同时接收下一块，密钥可逐块变化。`AES_LOW_AREA=0` 原高速版和 `1` 默认低面积版不变。历史参数名现为三值选择，并非布尔变量。
+
+同用 Yosys 0.64、`synth -noabc; check -assert; stat` 对单 AES 比较：原高速版 **7,321** 个通用单元，优化版 **6,937** 个，减少 **384（5.25%）**，均为 XOR 数量变化；其他单元种类数量相同。`flatten; ltp -noff` 得到不计触发器的最长拓扑路径分别为 **70、68 层**，该指标不含工艺延时或负载，不能代替 STA。优化版以 88 XOR 的 32 位线性网络实现一列 MixColumns，同时化简第二轮密钥扩展的 XOR 依赖链；仍保留 40 个组合 S-box 调用。`make area-aes-balanced` 可重现该同口径对比，`make test-aes-formal` 可检查等价。
+
+同口径 `mdm_sec` 顶层、`MAX_BYTES=2048` 的两路 AES 全部选择原高速版时为 **117,931** 个通用单元，全部选择优化版时为 **117,163** 个，减少 768（约 0.65%）；这个综合将缓冲映射到通用逻辑，目标 SRAM 宏会改变占比。可分别执行以下命令复现，并使用不同目录保存日志：
+
+```sh
+make synth-generic BUILD_DIR=build/top-fast SYNTH_MAX_BYTES=2048 SYNTH_AES_LOW_AREA=0
+make synth-generic BUILD_DIR=build/top-balanced SYNTH_MAX_BYTES=2048 SYNTH_AES_LOW_AREA=2
+```
+
+**通用单元数不等于实际面积，也不是时序结果。** 两轮组合路径、网络 fanout、工具映射和布局布线均会影响结果；需目标工艺库与同一时钟约束下的综合、STA 和 PPA 才能确认实际面积收益及同频吞吐。实现与接口详见 [5 拍优化核规格书](specs/aes_balanced_core_spec.docx)。
 
 缓存比较需要注意口径：旧输入缓存本身是 56,207 个通用单元，旧结果缓存是 39,810 个；新 `u_input_buffer` 同时承担输入和结果保存，单独为 56,510 个。它比旧的**输入缓存单独**略大，因为多容纳了末尾 MAC，但替代了两份缓存。地址加法优化本身只能节省约 0.5%，主要节省来自**取消第二份整包存储**，而不是声称输入存储本身减半。
 
@@ -26,7 +41,8 @@ make area-compare YOSYS=/path/to/yosys
 # 汇总与完整分层报告：build/rtl/area-compare/
 
 make synth-aes YOSYS=/path/to/yosys SYNTH_AES_LOW_AREA=1   # 默认低面积 AES
-make synth-aes YOSYS=/path/to/yosys SYNTH_AES_LOW_AREA=0   # 5 拍高速 AES
+make synth-aes YOSYS=/path/to/yosys SYNTH_AES_LOW_AREA=0   # 原 5 拍高速 AES
+make synth-aes YOSYS=/path/to/yosys SYNTH_AES_LOW_AREA=2   # 5 拍面积优化 AES
 make synth-buffer YOSYS=/path/to/yosys BUFFER_CAP_BYTES=2052 BUFFER_READ_PORTS=2
 make synth-generic YOSYS=/path/to/yosys SYNTH_MAX_BYTES=2048 SYNTH_AES_LOW_AREA=1
 ```
@@ -74,10 +90,10 @@ AES 包装器参数从顶层传递到两个通道：
 
 ```verilog
 mdm_sec #(.MAX_BYTES(2048), .AES_LOW_AREA(1)) u_sec (...); // 默认，50 拍/块
-// 改为 .AES_LOW_AREA(0) 选择原来的 5 拍/块 AES
+// .AES_LOW_AREA(0) 选择原来的 5 拍/块 AES；.AES_LOW_AREA(2) 选择 5 拍优化版
 ```
 
-`AES_LOW_AREA` 只允许 0 或 1。**这是有性能影响的默认值变更**：原来的 AES 为 5 拍，现在默认是 50 拍；外围不能再假设原来的固定响应周期。`AES_LOW_AREA=0` 保留旧 AES 算法核的 5 拍延迟和启动间隔，但整机仍采用本次优化的原地缓冲调度，因此不能保证整个包的周期与旧版完全相同。高速备选保留旧 function 写法；上面的细粒度层次表对应默认低面积版。
+`AES_LOW_AREA` 允许 0、1 或 2。**默认值有性能影响**：原来的 AES 为 5 拍，现在默认是 50 拍；外围不能再假设默认配置的固定响应周期为 5 拍。`AES_LOW_AREA=0/2` 分别选择原高速和新优化核，均为 5 拍延迟和启动间隔，但整机仍采用原地缓冲调度，因此不能保证整个包的周期与旧版完全相同。上面的细粒度层次表对应默认低面积版。
 
 最小块间隔是原语数据率的上限，不是整包吞吐率。若仅举例使用 100 MHz，低面积核上限为 `128 × 100 MHz / 50 = 256 Mbit/s`，高速核为 `128 × 100 MHz / 5 = 2.56 Gbit/s`；这不是频率保证，也没有算包的装载、EIA2 的块间依赖、输出和等待。`busy` 与 `ready` 在末拍可以同时为 1，表示旧块尚在执行但可以接收下一块。
 

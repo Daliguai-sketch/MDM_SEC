@@ -10,7 +10,7 @@
 2. 使用同一个 `simv` 自检 **20 个定向包**，生成原生 `waves.fsdb`；
 3. 单独编译 `tb_aes_random`，回归前 **8 个 AES 块**并生成 AES FSDB；可选全部 515 个。
 
-也可只跑包级或跳过 2641 包。2641 包是默认 `MAX_BYTES=2048` 的一组配置，**不是历史 5546 次全配置回归**；默认 AES 为低面积配置。所有测试数据和密钥仅用于验证，不得在可公开波形中放真实密钥。
+也可只跑包级或跳过 2641 包。2641 包是默认 `MAX_BYTES=2048` 的一组配置，**不是涵盖三种 AES 和全部容量的完整回归**；默认 AES 为低面积配置。所有测试数据和密钥仅用于验证，不得在可公开波形中放真实密钥。
 
 ## 2. 外网生成并打包
 
@@ -137,14 +137,15 @@ verdi -simflow -dbdir /脚本打印的路径/tb/simv.daidir \
 ```sh
 RUN_FULL=0 ./run.sh                          # 跳过 2641 包，仍跑 20 个定向包 + 8 AES
 RUN_AES=0 ./run.sh                           # 只跑包级 testbench，不编译 AES testbench
-AES_LOW_AREA=0 ./run.sh                      # 选择 5 拍高速 AES；默认是 50 拍低面积
+AES_LOW_AREA=0 ./run.sh                      # 选择原 5 拍高速 AES；默认是 50 拍低面积
+AES_LOW_AREA=2 ./run.sh                      # 选择新的 5 拍面积优化 AES
 FSDB_MDA=1 ./run.sh                          # 额外 dump 包缓冲数组，波形更大
 AES_BLOCKS=515 ./run.sh                      # AES 回归全部 515 块并生成对应 FSDB
 FSDB_FULL=1 ./run.sh                         # 2641 包也生成 regression.fsdb，可能很大
 RUN_ROOT=/design/tb/sim_outputs ./run.sh     # 可选，路径按本机情况修改
 ```
 
-默认 `RUN_AES=1` 使用 `filelist_aes.f` 和 `tb_aes_random.sv` 单独编译；输出在同一次运行目录的 `aes/` 下，包含 `compile.log`、`sim.log`、`simv.daidir` 和 `aes_waves.fsdb`。`AES_BLOCKS` 范围为 2～515。`FSDB_FULL=1` 需要 `RUN_FULL=1`，在 `tb/regression.fsdb` 额外记录完整回归；失败时可参考部分波形调试，但失败文件不算通过。`AES_LOW_AREA` 的 50/5 拍为单块原语时序，不是整包延迟。`VCS_EXTRA_FLAGS` 可传空格分隔的本地 VCS 额外选项，不进行 shell 求值。
+默认 `RUN_AES=1` 使用 `filelist_aes.f` 和 `tb_aes_random.sv` 单独编译；输出在同一次运行目录的 `aes/` 下，包含 `compile.log`、`sim.log`、`simv.daidir` 和 `aes_waves.fsdb`。`AES_BLOCKS` 范围为 2～515。`FSDB_FULL=1` 需要 `RUN_FULL=1`，在 `tb/regression.fsdb` 额外记录完整回归；失败时可参考部分波形调试，但失败文件不算通过。`AES_LOW_AREA=1/0/2` 的 50/5/5 拍为单块原语时序，不是整包延迟。`VCS_EXTRA_FLAGS` 可传空格分隔的本地 VCS 额外选项，不进行 shell 求值。
 
 ## 6. 检查、故障与边界
 

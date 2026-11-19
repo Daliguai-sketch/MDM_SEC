@@ -12,7 +12,8 @@
 make test-directed                 # 只运行 20 个包用例，默认低面积 AES，不写 VCD
 make test-directed WAVE_AES_LOW_AREA=0  # 同一组用例切换高速 AES
 make wave                          # 运行自检并产生两个低面积版 VCD
-make wave WAVE_AES_LOW_AREA=0      # 产生两个高速版 VCD，不覆盖低面积版
+make wave WAVE_AES_LOW_AREA=0      # 产生两个原高速版 VCD，不覆盖低面积版
+make wave WAVE_AES_LOW_AREA=2      # 产生两个 5 拍优化版 VCD
 ```
 
 例如，PyPI 版 Verilator 不在 `PATH` 中时，可以指定 `make wave VERILATOR="$HOME/.local/bin/verilator-cli"`。首次运行需要编译；成功时可看到 20 个包用例及 AES 块 `PASS`，随后还会看到 `PASS packet VCD` 和 `PASS aes VCD`。`make test` 也包含 `test-directed`，但不会自动生成 VCD。
@@ -25,9 +26,11 @@ make wave WAVE_AES_LOW_AREA=0      # 产生两个高速版 VCD，不覆盖低面
 | `build/rtl/waveforms/aes128_low_area.vcd` | 独立低面积 AES 核的轮次和连续块 |
 | `build/rtl/waveforms/mdm_sec_fast.vcd` | `WAVE_AES_LOW_AREA=0` 时的包波形 |
 | `build/rtl/waveforms/aes128_fast.vcd` | `WAVE_AES_LOW_AREA=0` 时的独立高速 AES 核 |
+| `build/rtl/waveforms/mdm_sec_balanced.vcd` | `WAVE_AES_LOW_AREA=2` 时的包波形 |
+| `build/rtl/waveforms/aes128_balanced.vcd` | `WAVE_AES_LOW_AREA=2` 时的独立 5 拍优化核 |
 | `build/rtl/wave_vectors.cases.txt` | 每个包用例的编号、算法、长度、预期 MAC 和名称 |
 
-两个 VCD 目标会自动检查文件中的时钟/复位变化、主要握手和内部信号、用例编号、模式 5 成功/失败响应及 AES 固定答案；它是波形完整性冒烟检查，不能替代 testbench 的逐项比较。文件名中的 `low_area` 和 `fast` 对应 RTL 的 `AES_LOW_AREA=1` 和 `0`。每次运行会覆盖所选配置的同名 VCD；所有生成文件均在 `build/`，`make clean` 会删除，重要结果请先另存。
+两个 VCD 目标会自动检查文件中的时钟/复位变化、主要握手和内部信号、用例编号、模式 5 成功/失败响应及 AES 固定答案；它是波形完整性冒烟检查，不能替代 testbench 的逐项比较。文件名中的 `low_area`、`fast` 和 `balanced` 对应 RTL 的 `AES_LOW_AREA=1`、`0` 和 `2`。每次运行会覆盖所选配置的同名 VCD；所有生成文件均在 `build/`，`make clean` 会删除，重要结果请先另存。
 
 其他选项：
 
@@ -95,7 +98,7 @@ gtkwave build/rtl/waveforms/aes128_low_area.vcd
 
 独立 AES bench 的根节点为 `tb_aes_random`。加入 `clk/rst_n/start/ready/busy/done`、`key/block_in/block_out` 和 `scoreboard_active`。开头有四次中途复位测试；`scoreboard_active=1` 后才是逐块自检。首块是 FIPS-197 固定答案：密钥 `000102030405060708090a0b0c0d0e0f`，输入 `00112233445566778899aabbccddeeff`，输出 `69c4e0d86a7b0430d8cdb78070b4c55a`。
 
-低面积版展开 `dut.g_low_area.u_core`，可看 `state/round/column`、`key_reg/round_state`、`sbox_in/sbox_out`，以及 `u_subbytes`、`u_key_expand`、`u_mix_column`、`u_shift_rows`、`u_add_round_key`；每块 50 拍。高速版展开 `dut.g_fast.u_core`，看 `state/pair/round_state`；每块 5 拍。两者均允许最后一拍接收下一块，`busy=1` 不代表一定 `ready=0`，以 `start && ready` 为接收条件。
+低面积版展开 `dut.g_low_area.u_core`，可看 `state/round/column`、`key_reg/round_state`、`sbox_in/sbox_out`，以及 `u_subbytes`、`u_key_expand`、`u_mix_column`、`u_shift_rows`、`u_add_round_key`；每块 50 拍。原高速版展开 `dut.g_fast.u_core`，新优化版展开 `dut.g_balanced.u_core`，均可看 `state/pair/round_state`，每块 5 拍。三个版本均允许最后一拍接收下一块，`busy=1` 不代表一定 `ready=0`，以 `start && ready` 为接收条件。
 
 ## 安全提示
 

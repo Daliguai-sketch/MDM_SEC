@@ -26,6 +26,7 @@ W = "{" + NS["w"] + "}"
 BASELINE = "938ac3409dbcf2c2bc4244f4b3d60f1b19da0c4c"
 DOCUMENTS = {
     "aes_core_spec": ("rtl/mdm_aes128.v", "mdm_aes128"),
+    "aes_balanced_core_spec": ("rtl/mdm_aes128_balanced.v", "mdm_aes128_balanced"),
     "snow3g_core_spec": ("rtl/mdm_snow3g.v", "mdm_snow3g"),
     "zuc_core_spec": ("rtl/mdm_zuc.v", "mdm_zuc"),
     "mdm_sec_spec": ("rtl/mdm_sec.v", "mdm_sec"),
@@ -194,7 +195,13 @@ class RtlDesignSpecsTest(unittest.TestCase):
                             "Source text not found in Word document: " + repr(paragraph),
                         )
                     all_text = "".join(n.text or "" for n in body.iter(W + "t"))
-                    self.assertIn(BASELINE, all_text)
+                    if stem in ("aes_core_spec", "aes_balanced_core_spec", "mdm_sec_spec"):
+                        # New/updated specs must not identify their RTL as the
+                        # old baseline, which predates the optimized AES core.
+                        self.assertIn("本文档所在 Git 提交的 RTL", all_text)
+                        self.assertNotIn(BASELINE, all_text)
+                    else:
+                        self.assertIn(BASELINE, all_text)
                     self.assertIn(hashlib.sha256(source_bytes).hexdigest(), all_text)
                     self.assertIn(module, all_text)
                     self.assertNotIn("[[DIAGRAM:", all_text)
@@ -223,6 +230,8 @@ class RtlDesignSpecsTest(unittest.TestCase):
     def test_important_contracts_are_present(self):
         expected = {
             "aes_core_spec": ("E50", "E5", "69c4e0d86a7b0430d8cdb78070b4c55a", "AES_LOW_AREA"),
+            "aes_balanced_core_spec": ("E5", "AES_LOW_AREA=2", "7,321", "6,937",
+                                       "70", "68", "69c4e0d86a7b0430d8cdb78070b4c55a"),
             "snow3g_core_spec": ("E33", "E34", "c54058f7", "advance", "35.216"),
             "zuc_core_spec": ("E33", "E34", "27bede74", "advance", "35.222"),
             "mdm_sec_spec": ("rsp_mac_match", "rsp_error", "MAX_BYTES", "65531",

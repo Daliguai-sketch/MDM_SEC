@@ -39,7 +39,7 @@ for arg in "$@"; do
     prev=$arg
 done
 [ -n "$log" ] && [ -r "$filelist" ] && [ -r "$tab" ] && [ -r "$pli" ]
-[ "$macro" = 1 ] && { [ "$variant" = 0 ] || [ "$variant" = 1 ]; }
+[ "$macro" = 1 ] && { [ "$variant" = 0 ] || [ "$variant" = 1 ] || [ "$variant" = 2 ]; }
 case "$top" in
     tb_mdm_sec) tb=tb_mdm_sec.sv; [ "$size" = 2048 ] ;;
     tb_aes_random) tb=tb_aes_random.sv ;;
@@ -57,7 +57,7 @@ while IFS= read -r entry; do
         *) echo "bad RTL filelist entry: $entry" >&2; exit 19 ;;
     esac
 done < ../vc/mdm_sec_rtl.vc
-[ -r ../vc/mdm_sboxes.vh ] && [ -r ../vc/mdm_aes_sbox.vh ]
+[ -r ../vc/mdm_sboxes.vh ] && [ -r ../vc/mdm_aes_sbox.vh ] && [ -r ../vc/mdm_aes_mix_balanced.vh ]
 printf '%s\n' "$top" > mock_top
 printf '%s\n' "$variant" > mock_variant
 mkdir -p simv.daidir
@@ -328,6 +328,18 @@ class UNetworkFlowTests(unittest.TestCase):
         self.assertIn("PASS 515 AES blocks, 5-cycle latency/II", (run / "aes/sim.log").read_text())
         self.assertIn("NOT A REAL FSDB", (run / "aes/aes_waves.fsdb").read_text())
 
+    def test_balanced_variant_is_packaged_and_selected(self):
+        result = self.run_script(updates={"AES_LOW_AREA": "2", "RUN_FULL": "0", "AES_BLOCKS": "8"})
+        run = self.run_dir(result)
+        for name in ("mdm_aes128_balanced.v", "mdm_aes_mix_balanced.vh"):
+            self.assertTrue((self.design / "vc" / name).is_file())
+        self.assertIn("-pvalue+tb_mdm_sec.TEST_AES_LOW_AREA=2",
+                      (run / "tb/compile_args.txt").read_text().splitlines())
+        self.assertIn("-pvalue+tb_aes_random.TEST_AES_LOW_AREA=2",
+                      (run / "aes/compile_args.txt").read_text().splitlines())
+        self.assertIn("PASS 8 AES blocks, 5-cycle latency/II", (run / "aes/sim.log").read_text())
+        self.assertIn("NOT A REAL FSDB", (run / "aes/aes_waves.fsdb").read_text())
+
     def test_full_regression_fsdb_option_and_missing_wave(self):
         result = self.run_script(updates={"RUN_AES": "0", "FSDB_FULL": "1", "FSDB_MDA": "1"})
         run = self.run_dir(result)
@@ -414,7 +426,7 @@ class UNetworkFlowTests(unittest.TestCase):
     def test_missing_or_empty_inputs_fail_before_vcs(self):
         for path in (self.tb / "vectors/packet_vectors.txt", self.tb / "vectors/wave_vectors.txt",
                      self.tb / "tb_aes_random.sv", self.design / "vc/mdm_sec.v",
-                     self.design / "vc/mdm_aes_sbox.vh"):
+                     self.design / "vc/mdm_aes_sbox.vh", self.design / "vc/mdm_aes_mix_balanced.vh"):
             with self.subTest(path=path):
                 original = path.read_bytes()
                 path.unlink()
@@ -460,7 +472,7 @@ class UNetworkFlowTests(unittest.TestCase):
 
     def test_invalid_parameters_and_missing_pli(self):
         for env, message in (
-            ({"AES_LOW_AREA": "2"}, "AES_LOW_AREA must be 0 or 1"),
+            ({"AES_LOW_AREA": "3"}, "AES_LOW_AREA must be 0, 1 or 2"),
             ({"RUN_FULL": "yes"}, "RUN_FULL must be 0 or 1"),
             ({"RUN_AES": "2"}, "RUN_AES must be 0 or 1"),
             ({"FSDB_MDA": "2"}, "FSDB_MDA must be 0 or 1"),

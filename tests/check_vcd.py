@@ -64,13 +64,16 @@ def main():
         if args.profile == "aes":
             low = f"{root}.dut.g_low_area.u_core"
             fast = f"{root}.dut.g_fast.u_core"
+            balanced = f"{root}.dut.g_balanced.u_core"
             if f"{low}.round" in signals:
                 required[f"{low}.round"] = {0, 9}
                 required[f"{low}.column"] = {0, 1, 2, 3}
             elif f"{fast}.pair" in signals:
                 required[f"{fast}.pair"] = {0, 4}
+            elif f"{balanced}.pair" in signals:
+                required[f"{balanced}.pair"] = {0, 4}
             else:
-                raise ValueError("AES round/column or fast-pair hierarchy missing from VCD")
+                raise ValueError("AES round/column or fast/balanced-pair hierarchy missing from VCD")
         missing = [name for name in (*required, *additional) if name not in signals]
         if missing:
             raise ValueError("VCD is missing required signals: " + ", ".join(missing))
