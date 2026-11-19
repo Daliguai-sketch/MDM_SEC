@@ -13,7 +13,7 @@
 | `make test-directed`，以及 `make test-directed WAVE_AES_LOW_AREA=0` | PASS：两种 AES 配置各 20 个定向包，覆盖六种模式、认证成功/失败、MAC/明密文依赖等待、原地覆盖保护和同沿读旧值 |
 | `make wave`，以及 `make wave WAVE_AES_LOW_AREA=0` | PASS：两种配置分别生成包和 AES VCD；自检并检查 VCD 内部时间、信号、模式 5 成功/失败事件和 AES 固定答案，见 [waveforms.md](waveforms.md) |
 | `make test-vcs-flow` | PASS：使用模拟工具检查 VCS/Verdi 命令参数、PLI 路径、配置选择和失败处理；**不生成或验证真正的 FSDB** |
-| `make test-u-network` | PASS：7 项转网包及离线流程检查，包括无 Python 的 PATH、`make -B`、传输损坏/缺失和禁止误用目标；VCS/Verdi 为模拟工具，不验证真正的 FSDB |
+| `make test-u-network` | PASS：16 项 `run.sh` 转网包与离线流程检查，包括 PATH 无 Python/Make 的脚本模拟、缺失/空文件、重复运行、同步/异步调度和失败处理；VCS/Verdi 为模拟工具，不验证真正的 FSDB，也不代表 VCS 自身无 Make 依赖 |
 | `make example` | PASS：模式 4 AES-CTR/AES-CMAC 命令、输入、响应和输出握手；MAC 和密文另与 PyCryptodome 核对 |
 | `make yosys-check`、`make yosys-check CHECK_MAX_BYTES=65535` | PASS：低面积配置，默认与最大参数的 Verilog 前端、层次展开、优化及 `check -assert` 报告 0 问题；最大容量只检查结构，不将其全部映射成触发器 |
 | `make yosys-check CHECK_MAX_BYTES=65535 CHECK_AES_LOW_AREA=0` | PASS：高速配置、最大容量层次和结构检查 0 问题 |
@@ -32,7 +32,7 @@ AES 固定答案采用 FIPS-197：`000102...0f` 密钥、`001122...ff` 输入、
 
 新增 VCS/Verdi FSDB 接口时，使用四态 Icarus 仿真器（WebAssembly 版本）分别运行了低面积和高速配置的 20 个包定向用例、各 8 个 AES 块，均通过；启用 FSDB 宏的两个 bench 也完成了 HDL 编译检查。
 
-新增外网/U 网分离流程时，在外网生成并打包 20 个包向量及 515 个 AES 向量，PyCryptodome 独立 AES 检查通过。将包解压到不含 Python 源码的独立目录后，用 Verilator 分别编译低面积/高速 RTL，两种配置均通过 20 包及全部 515 个 AES 块；之后在 PATH 不含 Python 的环境中运行已编译仿真程序也通过。`make test-u-network` 另用纯 shell 模拟 VCS，证明预生成流程在 PATH 无 Python、强制重编译和向量时间戳变化时不会调用生成器，也不复用旧 `simv`。**模拟 VCS 和 Verilator 不能验证真实 VCS/PLI 或 FSDB**。
+将 U 网入口改为 `run.sh` 后，在外网生成并打包 2641 个包级向量、20 个定向包和 515 个 AES 向量，PyCryptodome 独立 AES 检查通过。解压新包后，使用包内两级 filelist 和 Verilator 分别编译低面积/高速 RTL：两种配置各通过 2641 包、20 个定向包和 515 个 AES 块；包级及 AES 的 VCD 事件检查均通过。Icarus WebAssembly 另对包内低面积、2048 字节配置通过 20 个定向包和 8 个 AES 块，启用 FSDB 宏时两个 bench 通过 HDL 编译（未执行 PLI）。已编译的两组 Verilator 包级和 AES 仿真程序在 PATH 不含 Python/Make 时也通过。`make test-u-network` 另用纯 shell 模拟 VCS，检查脚本在 PATH 无 Python/Make 时的参数、必要文件检查、失败及防旧结果复用。**模拟 VCS、Verilator 和 Icarus 不能验证真实 VCS/PLI 或 FSDB，也不能证明现场 VCS 自身无 Make 依赖**。
 
 本次环境没有 VCS、Verdi 及其授权，也无法访问 U 网的 `/design/tb/`，尚未实际链接 Verdi PLI、生成或打开原生 FSDB；请在 U 网按 [u_network_test.md](u_network_test.md) 运行验证。同机开发流程见 [synopsys_fsdb.md](synopsys_fsdb.md)。
 

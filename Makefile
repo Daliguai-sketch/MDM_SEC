@@ -28,9 +28,9 @@ VERDI_TAB ?= $(if $(strip $(VERDI_PLI_DIR)),$(VERDI_PLI_DIR)/novas.tab,)
 VERDI_PLI ?= $(if $(strip $(VERDI_PLI_DIR)),$(VERDI_PLI_DIR)/pli.a,)
 FSDB_DIR ?= $(WAVE_DIR)
 FSDB_MDA ?= 0
-# Normal development generates vectors on demand. The air-gapped flow uses
-# immutable, externally generated inputs and must never invoke Python, even
-# when timestamps change or make -B is used.
+# Same-machine development generates vectors on demand by default. This
+# optional prebuilt mode reads existing inputs without Python prerequisites.
+# The U-network transfer bundle instead uses tools/u_network/run.sh, not Make.
 FSDB_PREBUILT ?= 0
 FSDB_VECTOR_DIR ?= $(BUILD_DIR)
 ifeq ($(FSDB_PREBUILT),1)
