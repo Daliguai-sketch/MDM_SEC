@@ -147,7 +147,28 @@ RUN_ROOT=/design/tb/sim_outputs ./run.sh     # 可选，路径按本机情况修
 
 默认 `RUN_AES=1` 使用 `filelist_aes.f` 和 `tb_aes_random.sv` 单独编译；输出在同一次运行目录的 `aes/` 下，包含 `compile.log`、`sim.log`、`simv.daidir` 和 `aes_waves.fsdb`。`AES_BLOCKS` 范围为 2～515。`FSDB_FULL=1` 需要 `RUN_FULL=1`，在 `tb/regression.fsdb` 额外记录完整回归；失败时可参考部分波形调试，但失败文件不算通过。`AES_LOW_AREA=1/0/2` 的 50/5/5 拍为单块原语时序，不是整包延迟。`VCS_EXTRA_FLAGS` 可传空格分隔的本地 VCS 额外选项，不进行 shell 求值。
 
-## 6. 检查、故障与边界
+## 6. `u_aes/g_fast` 可见但 `u_core` 没有波形
+
+此 U 网脚本生成的是 VCS/Verdi **FSDB**，不是外网 Verilator 的 VCD；外网旧版 `--trace-depth 4` 的 VCD 问题不能直接当作本 FSDB 的原因。当前包级 testbench 在传入 `+FSDB=...` 后调用 `$fsdbDumpvars(0,tb_mdm_sec)`，请求递归 dump 普通信号；脚本的 VCS 编译包含 `-debug_access+all -kdb -lca`。`FSDB_MDA=1` 只额外 dump 包缓冲的存储数组，与 AES 普通信号无关。实际 FSDB 内容仍需在本地 VCS/Verdi 中检查。
+
+为缩短排查时间，可从 `mdm_sec_u/design/tb` 再运行一次（自动新建目录，不覆盖旧运行）：
+
+```sh
+AES_LOW_AREA=0 RUN_FULL=0 ./run.sh
+# 按脚本打印的 Fresh output directory 替换以下 R；使用同一次运行目录：
+R=/实际打印的路径/mdm_sec_XXXXXXXX
+grep -E 'Writing packet FSDB|DIRECTED configuration|PASS directed waveform|PASS 20 packet' "$R/tb/sim.log"
+grep -Ei 'fsdb|pli|warning|error' "$R/tb/compile.log" "$R/tb/sim.log"
+verdi -simflow -dbdir "$R/tb/simv.daidir" -ssf "$R/tb/waves.fsdb"
+```
+
+预期配置行包含 `MAX_BYTES=2048 AES_LOW_AREA=0`。`RUN_FULL=0` 只跳过 2641 包回归，仍运行 20 个定向包；如果站点使用 `bsub_cmd`，仍需采用第 4 节的阻塞提交方式。不要把 `tb/` 的设计数据库配给 `aes/aes_waves.fsdb`，也不要混用不同运行的数据库和 FSDB。独立 AES 测试要使用同一运行的 `aes/simv.daidir` 和 `aes/aes_waves.fsdb`。
+
+包级原高速核路径有两份，分别是 `tb_mdm_sec.dut.u_cipher.u_aes.g_fast.u_core` 和 `tb_mdm_sec.dut.u_integrity.u_aes.g_fast.u_core`；独立 AES 波形则是 `tb_aes_random.dut.g_fast.u_core`。仅 `AES_LOW_AREA=0` 是 `g_fast`，默认值 1 是 `g_low_area`，2 是 `g_balanced`。先加入 `tb_mdm_sec.wave_case_id`，放大用例 1（加密 AES）、4（完整性 AES）或 6（两路 AES），同时加入相应实例的 `start/ready/busy/done`、`state/pair/round_state/key_reg/rcon`。接受请求为 `start && ready`，工作时 `pair` 经历 0～4；空闲时或未选 AES 的用例不会持续变化。
+
+请区分设计树中层次或信号不存在、信号加入波形后无值、以及信号有值但没有变化：源码树可见不代表 FSDB 确实包含数据。若检查后仍有问题，保留运行命令、对应 `tb/compile.log`、`tb/sim.log`、FSDB 文件名及波形截图，按现场数据安全要求脱敏，禁止发送真实密钥。非空 FSDB 或自检 PASS 均不单独证明内部波形已记录。
+
+## 7. 检查、故障与边界
 
 - 可执行 `./run.sh --check-files` 只检查当前配置需要的文件是否可读、非空，不启动 VCS；文件缺失时请转入完整包。该检查不检测内容损坏或版本混用。需要修改 filelist 时，建议修改外网模板并重新打包。
 - `VCS not found`、PLI 缺失或许可证错误：在 U 网检查工具路径、可读性、许可与 C/C++ 工具；查看对应 `compile.log`。不同 Verdi/VCS 版本需匹配。

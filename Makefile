@@ -60,10 +60,15 @@ RTL := $(AES_RTL) rtl/mdm_snow3g.v rtl/mdm_zuc.v rtl/mdm_packet_buffer.v \
        rtl/mdm_cipher.v rtl/mdm_integrity.v rtl/mdm_sec.v
 HEADERS := rtl/mdm_sboxes.vh rtl/mdm_aes_sbox.vh rtl/mdm_aes_mix_balanced.vh
 
-.PHONY: all test example lint test-style test-specs test-aes test-fast test-balanced test-aes-formal area-aes-balanced test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
+.PHONY: all test example lint test-style test-specs test-aes test-fast test-balanced test-aes-formal area-aes-balanced test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
 all: test
 
-test: lint test-style test-specs example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-balanced test-directed test-vcs-flow test-u-network
+test: lint test-style test-specs example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-balanced test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network
+
+# Synthetic VCDs exercise hierarchy, variant and activity checks, including
+# rejection of the previous depth-4 packet trace.
+test-vcd-check:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/test_vcd_check.py
 
 # These verify command wiring with mocks, not real VCS/PLI or FSDB contents.
 test-vcs-flow:
@@ -176,14 +181,22 @@ $(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec: 
 	@case "$(WAVE_AES_LOW_AREA)" in 0|1|2) ;; *) echo 'WAVE_AES_LOW_AREA must be 0, 1 or 2'; exit 1;; esac
 	@test $(WAVE_MAX_BYTES) -ge 512 -a $(WAVE_MAX_BYTES) -le 65535 || { echo 'WAVE_MAX_BYTES must be 512..65535 for the directed suite'; exit 1; }
 	@mkdir -p $(@D)
-	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing --trace --trace-depth 4 -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing --trace --trace-depth 5 -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
 		--top-module tb_mdm_sec -GTEST_MAX_BYTES=$(WAVE_MAX_BYTES) -GTEST_AES_LOW_AREA=$(WAVE_AES_LOW_AREA) --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_mdm_sec.sv
 	@touch $@
 
 test-directed: $(BUILD_DIR)/wave_vectors.txt $(BUILD_DIR)/wave_vectors.cases.txt $(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec
 	$(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/wave_vectors.txt) +DIRECTED_COVERAGE +CASE_LOG
 
-# VCD files are written only by explicit waveform targets, not normal tests.
+# Exercise the real packet trace recipe during make test; do not leave a VCD.
+test-vcd-trace: $(BUILD_DIR)/wave_vectors.txt $(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec
+	@set -eu; trace=$$(mktemp "$(abspath $(BUILD_DIR))/packet-vcd.XXXXXXXX"); \
+		trap 'rm -f "$$trace"' EXIT; \
+		$(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec \
+			+VECTORS=$(abspath $(BUILD_DIR)/wave_vectors.txt) +DIRECTED_COVERAGE "+WAVE=$$trace"; \
+		$(PYTHON) tests/check_vcd.py packet "$$trace"
+
+# Persistent VCD files are written only by explicit waveform targets.
 $(BUILD_DIR)/tb_wave_aes_$(WAVE_AES_LOW_AREA)/Vtb_aes_random: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv Makefile
 	@test -n "$(VERILATOR)" || { echo 'Install Verilator (or set VERILATOR=...)'; exit 1; }
 	@case "$(WAVE_AES_LOW_AREA)" in 0|1|2) ;; *) echo 'WAVE_AES_LOW_AREA must be 0, 1 or 2'; exit 1;; esac
@@ -192,7 +205,8 @@ $(BUILD_DIR)/tb_wave_aes_$(WAVE_AES_LOW_AREA)/Vtb_aes_random: $(AES_RTL) $(HEADE
 		--top-module tb_aes_random -GTEST_AES_LOW_AREA=$(WAVE_AES_LOW_AREA) --Mdir $(abspath $(@D)) $(AES_RTL) tests/rtl/tb_aes_random.sv
 	@touch $@
 
-# Keep VCD hierarchy useful without tracing all 16,512+ shared-buffer storage bits.
+# Packet traces include both AES u_core instances (depth 5), without tracing
+# the large shared-buffer memory arrays. The checker verifies core activity.
 wave-packet: $(BUILD_DIR)/wave_vectors.txt $(BUILD_DIR)/wave_vectors.cases.txt $(BUILD_DIR)/tb_wave_packet_$(WAVE_MAX_BYTES)_$(WAVE_AES_LOW_AREA)/Vtb_mdm_sec
 	@mkdir -p "$(WAVE_DIR)"
 	@rm -f "$(WAVE_DIR)/mdm_sec_$(WAVE_VARIANT).vcd"

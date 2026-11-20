@@ -34,6 +34,29 @@ def read_header(stream):
     raise ValueError("VCD has no enddefinitions")
 
 
+def add_aes_core_checks(signals, wrapper, required, additional):
+    """Require a traced, active implementation, not just wrapper ports."""
+    variants = (("g_low_area", "round"), ("g_fast", "pair"), ("g_balanced", "pair"))
+    found = [(name, f"{wrapper}.{name}.u_core") for name, counter in variants
+             if f"{wrapper}.{name}.u_core.{counter}" in signals]
+    if len(found) != 1:
+        raise ValueError(
+            f"AES u_core internals missing or ambiguous below {wrapper}; "
+            "check the trace depth or FSDB dump scope and matching design database"
+        )
+    name, core = found[0]
+    required[f"{core}.state"] = {0, 1}
+    required[f"{core}.busy"] = {0, 1}
+    required[f"{core}.done"] = {0, 1}
+    if name == "g_low_area":
+        required[f"{core}.round"] = {0, 9}
+        required[f"{core}.column"] = {0, 1, 2, 3}
+    else:
+        required[f"{core}.pair"] = {0, 4}
+    additional.extend((f"{core}.round_state", f"{core}.key_reg", f"{core}.rcon"))
+    return name
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("profile", choices=("packet", "aes"))
@@ -62,18 +85,12 @@ def main():
     with args.vcd.open() as stream:
         signals = read_header(stream)
         if args.profile == "aes":
-            low = f"{root}.dut.g_low_area.u_core"
-            fast = f"{root}.dut.g_fast.u_core"
-            balanced = f"{root}.dut.g_balanced.u_core"
-            if f"{low}.round" in signals:
-                required[f"{low}.round"] = {0, 9}
-                required[f"{low}.column"] = {0, 1, 2, 3}
-            elif f"{fast}.pair" in signals:
-                required[f"{fast}.pair"] = {0, 4}
-            elif f"{balanced}.pair" in signals:
-                required[f"{balanced}.pair"] = {0, 4}
-            else:
-                raise ValueError("AES round/column or fast/balanced-pair hierarchy missing from VCD")
+            add_aes_core_checks(signals, f"{root}.dut", required, additional)
+        else:
+            variants = [add_aes_core_checks(signals, f"{root}.dut.{lane}.u_aes", required, additional)
+                        for lane in ("u_cipher", "u_integrity")]
+            if variants[0] != variants[1]:
+                raise ValueError(f"AES variants differ between packet lanes: {variants}")
         missing = [name for name in (*required, *additional) if name not in signals]
         if missing:
             raise ValueError("VCD is missing required signals: " + ", ".join(missing))

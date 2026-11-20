@@ -16,7 +16,7 @@ make wave WAVE_AES_LOW_AREA=0      # 产生两个原高速版 VCD，不覆盖低
 make wave WAVE_AES_LOW_AREA=2      # 产生两个 5 拍优化版 VCD
 ```
 
-例如，PyPI 版 Verilator 不在 `PATH` 中时，可以指定 `make wave VERILATOR="$HOME/.local/bin/verilator-cli"`。首次运行需要编译；成功时可看到 20 个包用例及 AES 块 `PASS`，随后还会看到 `PASS packet VCD` 和 `PASS aes VCD`。`make test` 也包含 `test-directed`，但不会自动生成 VCD。
+例如，PyPI 版 Verilator 不在 `PATH` 中时，可以指定 `make wave VERILATOR="$HOME/.local/bin/verilator-cli"`。首次运行需要编译；成功时可看到 20 个包用例及 AES 块 `PASS`，随后还会看到 `PASS packet VCD` 和 `PASS aes VCD`。`make test` 也包含 `test-directed`，并在临时 VCD 中检查包级 AES 内部活动后删除该文件；不会保留可查看的波形。
 
 默认输出：
 
@@ -30,7 +30,7 @@ make wave WAVE_AES_LOW_AREA=2      # 产生两个 5 拍优化版 VCD
 | `build/rtl/waveforms/aes128_balanced.vcd` | `WAVE_AES_LOW_AREA=2` 时的独立 5 拍优化核 |
 | `build/rtl/wave_vectors.cases.txt` | 每个包用例的编号、算法、长度、预期 MAC 和名称 |
 
-两个 VCD 目标会自动检查文件中的时钟/复位变化、主要握手和内部信号、用例编号、模式 5 成功/失败响应及 AES 固定答案；它是波形完整性冒烟检查，不能替代 testbench 的逐项比较。文件名中的 `low_area`、`fast` 和 `balanced` 对应 RTL 的 `AES_LOW_AREA=1`、`0` 和 `2`。每次运行会覆盖所选配置的同名 VCD；所有生成文件均在 `build/`，`make clean` 会删除，重要结果请先另存。
+两个 VCD 目标会自动检查文件中的时钟/复位变化、主要握手、用例编号、模式 5 成功/失败响应及 AES 固定答案。包级检查还要求加密与完整性两路 `u_aes` 各自的 `u_core` 内部状态、计数器及数据寄存器存在并变化；独立 AES 波形同样检查 `u_core`。这是波形完整性冒烟检查，不能替代 testbench 的逐项比较。文件名中的 `low_area`、`fast` 和 `balanced` 对应 RTL 的 `AES_LOW_AREA=1`、`0` 和 `2`。每次运行会覆盖所选配置的同名 VCD；所有生成文件均在 `build/`，`make clean` 会删除，重要结果请先另存。
 
 其他选项：
 
@@ -41,7 +41,16 @@ make wave-packet WAVE_MAX_BYTES=2048      # 使用顶层默认容量重新编译
 make wave WAVE_DIR=build/my-waves          # 更改 VCD 输出目录
 ```
 
-`WAVE_AES_BLOCKS` 可设为 2～515（向量文件当前有 515 块）；前 200 块逐块检查最早连续启动。波形包 bench 默认为 `WAVE_MAX_BYTES=512`，足以容纳全部定向用例，但不是 RTL 的默认 2048 字节参数；可设为 512～65535。改变容量会重编译，较大容量的编译和仿真可能更慢。更改容量不会改变 VCD 文件名，如要保留两种容量，请分别设置 `WAVE_DIR`。为限制文件大小，包波形追踪深度为 4，包含输入缓冲读写端口但不展开所有存储单元；AES 独立波形包含更深的低面积核心层次。
+`WAVE_AES_BLOCKS` 可设为 2～515（向量文件当前有 515 块）；前 200 块逐块检查最早连续启动。波形包 bench 默认为 `WAVE_MAX_BYTES=512`，足以容纳全部定向用例，但不是 RTL 的默认 2048 字节参数；可设为 512～65535。改变容量会重编译，较大容量的编译和仿真可能更慢。更改容量不会改变 VCD 文件名，如要保留两种容量，请分别设置 `WAVE_DIR`。包级 Verilator 追踪深度为 5，包含两路 AES 的 `u_core` 内部信号和输入缓冲读写端口，不展开所有存储单元。若要查看低面积核 `u_core` 内更深的子模块，使用独立 AES 波形。
+
+旧版包级 VCD 追踪深度为 4，会遗漏 `u_core` 内部信号，旧文件无法补出缺失的数据。更新源码后重编译并重新仿真（会覆盖所选同名包级 VCD）：
+
+```sh
+make -B wave-packet WAVE_AES_LOW_AREA=0  # 原 5 拍高速核
+# 或将 0 改为 2：5 拍优化核；改为 1：50 拍低面积核
+```
+
+以上深度限制只针对 Verilator/VCD，不是 VCS/FSDB 的 dump 设置。
 
 ## 查看方法
 
@@ -96,7 +105,16 @@ gtkwave build/rtl/waveforms/aes128_low_area.vcd
 
 ### AES 重点信号
 
-独立 AES bench 的根节点为 `tb_aes_random`。加入 `clk/rst_n/start/ready/busy/done`、`key/block_in/block_out` 和 `scoreboard_active`。开头有四次中途复位测试；`scoreboard_active=1` 后才是逐块自检。首块是 FIPS-197 固定答案：密钥 `000102030405060708090a0b0c0d0e0f`，输入 `00112233445566778899aabbccddeeff`，输出 `69c4e0d86a7b0430d8cdb78070b4c55a`。
+包级波形中，原高速 AES 的实例有两份（只选择实际使用的一份或两份加入波形窗口）：
+
+```text
+tb_mdm_sec.dut.u_cipher.u_aes.g_fast.u_core       # 加密通道
+tb_mdm_sec.dut.u_integrity.u_aes.g_fast.u_core    # 完整性通道
+```
+
+先加入 `tb_mdm_sec.wave_case_id`，在用例 1 看加密通道、用例 4 看完整性通道，或在用例 6 看两路 AES；加入各 `u_core` 的 `start/ready/busy/done`、`state/pair/round_state/key_reg/rcon`，放大该用例。成功接收为 `start && ready`，高速核工作时 `pair` 经历 0～4；空闲或没有使用 AES 的用例中不应期待它持续变化。原 5 拍为 `g_fast`，新 5 拍优化版为 `g_balanced`（`AES_LOW_AREA=2`），默认 50 拍版为 `g_low_area`（`AES_LOW_AREA=1`）；generate 分支不会同时存在。
+
+独立 AES bench 的根节点为 `tb_aes_random`，层级是 `tb_aes_random.dut.g_fast.u_core` 等，不带包级的 `u_cipher` 或 `u_integrity`。加入 `clk/rst_n/start/ready/busy/done`、`key/block_in/block_out` 和 `scoreboard_active`。开头有四次中途复位测试；`scoreboard_active=1` 后才是逐块自检。首块是 FIPS-197 固定答案：密钥 `000102030405060708090a0b0c0d0e0f`，输入 `00112233445566778899aabbccddeeff`，输出 `69c4e0d86a7b0430d8cdb78070b4c55a`。
 
 低面积版展开 `dut.g_low_area.u_core`，可看 `state/round/column`、`key_reg/round_state`、`sbox_in/sbox_out`，以及 `u_subbytes`、`u_key_expand`、`u_mix_column`、`u_shift_rows`、`u_add_round_key`；每块 50 拍。原高速版展开 `dut.g_fast.u_core`，新优化版展开 `dut.g_balanced.u_core`，均可看 `state/pair/round_state`，每块 5 拍。三个版本均允许最后一拍接收下一块，`busy=1` 不代表一定 `ready=0`，以 `start && ready` 为接收条件。
 
