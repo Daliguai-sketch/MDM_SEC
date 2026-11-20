@@ -1,0 +1,13 @@
++incdir+../vc
+../vc/mdm_aes_sbox.v
+../vc/mdm_aes_blocks.v
+../vc/mdm_aes128_serial.v
+../vc/mdm_aes128_fast.v
+../vc/mdm_aes128_balanced.v
+../vc/mdm_aes128.v
+../vc/mdm_snow3g.v
+../vc/mdm_zuc.v
+../vc/mdm_packet_buffer.v
+../vc/mdm_cipher.v
+../vc/mdm_integrity.v
+../vc/mdm_sec.v

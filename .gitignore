@@ -1,0 +1,12 @@
+# Generated RTL simulations, reports and Python bytecode
+/build/
+/obj_dir/
+__pycache__/
+*.py[cod]
+*.vcd
+*.fst
+*.fsdb
+*.fsdb.*
+
+# Download bundles are generated locally and should not be committed.
+/deliverables/
