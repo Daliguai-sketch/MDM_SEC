@@ -165,7 +165,14 @@ grep -Ei 'fsdb|pli|warning|error' "/实际打印的路径/mdm_sec_XXXXXXXX/tb/co
 verdi -simflow -dbdir "/实际打印的路径/mdm_sec_XXXXXXXX/tb/simv.daidir" -ssf "/实际打印的路径/mdm_sec_XXXXXXXX/tb/waves.fsdb"
 ```
 
-预期配置行包含 `MAX_BYTES=2048 AES_LOW_AREA=0`。`RUN_FULL=0` 只跳过 2641 包回归，仍运行 20 个定向包；如果站点使用 `bsub_cmd`，仍需采用第 4 节的阻塞提交方式。不要把 `tb/` 的设计数据库配给 `aes/aes_waves.fsdb`，也不要混用不同运行的数据库和 FSDB。独立 AES 测试要使用同一运行的 `aes/simv.daidir` 和 `aes/aes_waves.fsdb`。
+预期配置行包含 `MAX_BYTES=2048 AES_LOW_AREA=0`。`RUN_FULL=0` 只跳过 2641 包回归，仍运行 20 个定向包；如果站点使用 `bsub_cmd`，仍需采用第 4 节的阻塞提交方式。不要把 `tb/` 的设计数据库配给 `aes/aes_waves.fsdb`，也不要混用不同运行的数据库和 FSDB。独立 AES 测试要使用同一运行的 `aes/simv.daidir` 和 `aes/aes_waves.fsdb`：
+
+```sh
+# 将示例路径替换为脚本打印的同一次运行路径
+verdi -simflow -dbdir "/实际打印的路径/mdm_sec_XXXXXXXX/aes/simv.daidir" -ssf "/实际打印的路径/mdm_sec_XXXXXXXX/aes/aes_waves.fsdb"
+```
+
+不要用 `verdi -f filelist.f -ssf .../aes/aes_waves.fsdb`：`filelist.f` 包含的是包级 `tb_mdm_sec`，而该 FSDB 来自独立的 `tb_aes_random`。只重新读取 filelist 也不能保证继承生成 FSDB 时 VCS 的参数覆盖；两个 testbench 源码默认参数均为 1，可能显示 `g_low_area`。应加载生成该 FSDB 的 `simv.daidir`，以使用对应的设计数据库。
 
 包级原高速核路径有两份，分别是 `tb_mdm_sec.dut.u_cipher.u_aes.g_fast.u_core` 和 `tb_mdm_sec.dut.u_integrity.u_aes.g_fast.u_core`；独立 AES 波形则是 `tb_aes_random.dut.g_fast.u_core`。仅 `AES_LOW_AREA=0` 是 `g_fast`，默认值 1 是 `g_low_area`，2 是 `g_balanced`。对于 0，`g_low_area` 不是选中的分支：如果看到低面积层次但 `u_aes.clk` 有波形，优先检查是否加载了旧设计数据库或旧信号列表，并用同次运行的数据库和 FSDB 新开 Verdi；外层 `u_aes.clk` 对各配置共用，不能单独证明内核匹配。`g_fast` 是 generate 块，内部时钟完整路径含 `g_fast.u_core.clk`。
 
