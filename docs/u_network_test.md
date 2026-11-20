@@ -79,13 +79,15 @@ cd /design/tb && \
 
 如果将包内 `design/vc/`、`design/tb/` 完整安装到现有工程，而该工程路径与截图相同，也可以进入 `/proj/asic/xin.zhang/r3p0/nl_sec_dev/nl_sec/de/design/tb` 运行 `./run.sh`。**已有工程先核对冲突并自行备份，不要直接覆盖同名源码或用户文件**；RTL、testbench、向量及清单必须来自同一个包。相对 filelist 不要求这个特定绝对路径。
 
-在 U 网通过既有方式设置 VCS 和 Verdi，环境变量须 `export` 给脚本：
+在 U 网通过既有方式设置 VCS 和 Verdi，并将工具路径设为环境变量供脚本继承。以下检查适用于 Bash 和 csh/tcsh：
 
 ```sh
-command -v vcs
-printf 'VCS_HOME=%s\nVERDI_HOME=%s\n' "${VCS_HOME:-未设置}" "${VERDI_HOME:-未设置}"
-# 若站点环境尚未导出，按实际安装路径 export VCS_HOME / VERDI_HOME。
+which vcs
+which verdi
+env | grep -E '^(VCS_HOME|VERDI_HOME|NOVAS_HOME)='
 ```
+
+若站点尚未设置，Bash 中使用 `export VCS_HOME=/实际路径`，csh/tcsh 中使用 `setenv VCS_HOME /实际路径`；`VERDI_HOME` 同理。脚本自身通过 Bash 运行，但交互终端可以是其他 shell。
 
 默认按截图中的 `$VERDI_HOME/share/PLI/VCS/LINUX64/novas.tab` 与 `pli.a` 查找；也支持 `linux64`、`NOVAS_HOME`，或者显式设置 `VERDI_PLI_DIR`，也可同时设置 `VERDI_TAB` 和 `VERDI_PLI`。`VCS=/实际路径/vcs` 可指定可执行程序。不要将许可证写入仓库或脚本。
 
@@ -94,11 +96,11 @@ printf 'VCS_HOME=%s\nVERDI_HOME=%s\n' "${VCS_HOME:-未设置}" "${VERDI_HOME:-�
 脚本如果在 `PATH` 中找到 `bsub_cmd`，默认使用它提交编译和每次仿真；否则直接运行 `vcs` / `simv`。也可明确选择：
 
 ```sh
-BSUB_CMD='' ./run.sh                         # 在已分配计算节点中直接执行
-BSUB_CMD='bsub -K -q your_queue' ./run.sh   # 示例：使用站点实际队列，阻塞直到结束
+env BSUB_CMD='' ./run.sh                         # 在已分配计算节点中直接执行
+env BSUB_CMD='bsub -K -q your_queue' ./run.sh   # 示例：使用站点实际队列，阻塞直到结束
 ```
 
-`BSUB_CMD` 以空格拆分为命令和参数，不执行 shell 求值；交互式 alias 不会自动继承，如站点的 `bsub_cmd` 是 Bash 函数，应先 `export -f bsub_cmd` 或提供可执行包装脚本。**包装器必须等待任务完成、返回真实退出码，并在共享文件系统上保留当前工作目录。** 脚本通过任务退出后写入的状态文件检测“只提交、不等待”的包装器；检测到异步返回时会报错，任务可能仍在后台排队/执行，需先按站点规则处理，不能把它当成功。原截图里的 `set -e` 本身无法保证异步任务的结果已返回。
+`BSUB_CMD` 以空格拆分为命令和参数，不执行 shell 求值；交互式 alias 不会自动继承。在 Bash 终端中，如站点的 `bsub_cmd` 是 Bash 函数，应先 `export -f bsub_cmd` 或提供可执行包装脚本；csh/tcsh 环境建议提供可执行包装脚本。**包装器必须等待任务完成、返回真实退出码，并在共享文件系统上保留当前工作目录。** 脚本通过任务退出后写入的状态文件检测“只提交、不等待”的包装器；检测到异步返回时会报错，任务可能仍在后台排队/执行，需先按站点规则处理，不能把它当成功。原截图里的 `set -e` 本身无法保证异步任务的结果已返回。
 
 ### 脚本实际命令与 testbench 参数
 
@@ -134,15 +136,17 @@ verdi -simflow -dbdir /脚本打印的路径/tb/simv.daidir \
 
 ## 5. 可选配置
 
+使用 `env` 可在 Bash 和 csh/tcsh 终端均传递本次运行的环境变量；不要写成 `./run.sh AES_LOW_AREA=0`（脚本不接受这样的命令行参数）：
+
 ```sh
-RUN_FULL=0 ./run.sh                          # 跳过 2641 包，仍跑 20 个定向包 + 8 AES
-RUN_AES=0 ./run.sh                           # 只跑包级 testbench，不编译 AES testbench
-AES_LOW_AREA=0 ./run.sh                      # 选择原 5 拍高速 AES；默认是 50 拍低面积
-AES_LOW_AREA=2 ./run.sh                      # 选择新的 5 拍面积优化 AES
-FSDB_MDA=1 ./run.sh                          # 额外 dump 包缓冲数组，波形更大
-AES_BLOCKS=515 ./run.sh                      # AES 回归全部 515 块并生成对应 FSDB
-FSDB_FULL=1 ./run.sh                         # 2641 包也生成 regression.fsdb，可能很大
-RUN_ROOT=/design/tb/sim_outputs ./run.sh     # 可选，路径按本机情况修改
+env RUN_FULL=0 ./run.sh                          # 跳过 2641 包，仍跑 20 个定向包 + 8 AES
+env RUN_AES=0 ./run.sh                           # 只跑包级 testbench，不编译 AES testbench
+env AES_LOW_AREA=0 ./run.sh                      # 选择原 5 拍高速 AES；默认是 50 拍低面积
+env AES_LOW_AREA=2 ./run.sh                      # 选择新的 5 拍面积优化 AES
+env FSDB_MDA=1 ./run.sh                          # 额外 dump 包缓冲数组，波形更大
+env AES_BLOCKS=515 ./run.sh                      # AES 回归全部 515 块并生成对应 FSDB
+env FSDB_FULL=1 ./run.sh                         # 2641 包也生成 regression.fsdb，可能很大
+env RUN_ROOT=/design/tb/sim_outputs ./run.sh     # 可选，路径按本机情况修改
 ```
 
 默认 `RUN_AES=1` 使用 `filelist_aes.f` 和 `tb_aes_random.sv` 单独编译；输出在同一次运行目录的 `aes/` 下，包含 `compile.log`、`sim.log`、`simv.daidir` 和 `aes_waves.fsdb`。`AES_BLOCKS` 范围为 2～515。`FSDB_FULL=1` 需要 `RUN_FULL=1`，在 `tb/regression.fsdb` 额外记录完整回归；失败时可参考部分波形调试，但失败文件不算通过。`AES_LOW_AREA=1/0/2` 的 50/5/5 拍为单块原语时序，不是整包延迟。`VCS_EXTRA_FLAGS` 可传空格分隔的本地 VCS 额外选项，不进行 shell 求值。
@@ -154,17 +158,18 @@ RUN_ROOT=/design/tb/sim_outputs ./run.sh     # 可选，路径按本机情况修
 为缩短排查时间，可从 `mdm_sec_u/design/tb` 再运行一次（自动新建目录，不覆盖旧运行）：
 
 ```sh
-AES_LOW_AREA=0 RUN_FULL=0 ./run.sh
-# 按脚本打印的 Fresh output directory 替换以下 R；使用同一次运行目录：
-R=/实际打印的路径/mdm_sec_XXXXXXXX
-grep -E 'Writing packet FSDB|DIRECTED configuration|PASS directed waveform|PASS 20 packet' "$R/tb/sim.log"
-grep -Ei 'fsdb|pli|warning|error' "$R/tb/compile.log" "$R/tb/sim.log"
-verdi -simflow -dbdir "$R/tb/simv.daidir" -ssf "$R/tb/waves.fsdb"
+env AES_LOW_AREA=0 RUN_FULL=0 FSDB_FULL=0 ./run.sh
+# 下列路径是示例；全部替换成脚本打印的同一次 Fresh output directory：
+grep -E 'Writing packet FSDB|DIRECTED configuration|PASS directed waveform|PASS 20 packet' "/实际打印的路径/mdm_sec_XXXXXXXX/tb/sim.log"
+grep -Ei 'fsdb|pli|warning|error' "/实际打印的路径/mdm_sec_XXXXXXXX/tb/compile.log" "/实际打印的路径/mdm_sec_XXXXXXXX/tb/sim.log"
+verdi -simflow -dbdir "/实际打印的路径/mdm_sec_XXXXXXXX/tb/simv.daidir" -ssf "/实际打印的路径/mdm_sec_XXXXXXXX/tb/waves.fsdb"
 ```
 
 预期配置行包含 `MAX_BYTES=2048 AES_LOW_AREA=0`。`RUN_FULL=0` 只跳过 2641 包回归，仍运行 20 个定向包；如果站点使用 `bsub_cmd`，仍需采用第 4 节的阻塞提交方式。不要把 `tb/` 的设计数据库配给 `aes/aes_waves.fsdb`，也不要混用不同运行的数据库和 FSDB。独立 AES 测试要使用同一运行的 `aes/simv.daidir` 和 `aes/aes_waves.fsdb`。
 
-包级原高速核路径有两份，分别是 `tb_mdm_sec.dut.u_cipher.u_aes.g_fast.u_core` 和 `tb_mdm_sec.dut.u_integrity.u_aes.g_fast.u_core`；独立 AES 波形则是 `tb_aes_random.dut.g_fast.u_core`。仅 `AES_LOW_AREA=0` 是 `g_fast`，默认值 1 是 `g_low_area`，2 是 `g_balanced`。先加入 `tb_mdm_sec.wave_case_id`，放大用例 1（加密 AES）、4（完整性 AES）或 6（两路 AES），同时加入相应实例的 `start/ready/busy/done`、`state/pair/round_state/key_reg/rcon`。接受请求为 `start && ready`，工作时 `pair` 经历 0～4；空闲时或未选 AES 的用例不会持续变化。
+包级原高速核路径有两份，分别是 `tb_mdm_sec.dut.u_cipher.u_aes.g_fast.u_core` 和 `tb_mdm_sec.dut.u_integrity.u_aes.g_fast.u_core`；独立 AES 波形则是 `tb_aes_random.dut.g_fast.u_core`。仅 `AES_LOW_AREA=0` 是 `g_fast`，默认值 1 是 `g_low_area`，2 是 `g_balanced`。对于 0，`g_low_area` 不是选中的分支：如果看到低面积层次但 `u_aes.clk` 有波形，优先检查是否加载了旧设计数据库或旧信号列表，并用同次运行的数据库和 FSDB 新开 Verdi；外层 `u_aes.clk` 对各配置共用，不能单独证明内核匹配。`g_fast` 是 generate 块，内部时钟完整路径含 `g_fast.u_core.clk`。
+
+先加入 `tb_mdm_sec.wave_case_id`，放大用例 1（加密 AES）、4（完整性 AES）或 6（两路 AES），同时加入相应实例的 `start/ready/busy/done`、`state/pair/round_state/key_reg/rcon`。接受请求为 `start && ready`，工作时 `pair` 经历 0～4；空闲时或未选 AES 的用例不会持续变化。
 
 请区分设计树中层次或信号不存在、信号加入波形后无值、以及信号有值但没有变化：源码树可见不代表 FSDB 确实包含数据。若检查后仍有问题，保留运行命令、对应 `tb/compile.log`、`tb/sim.log`、FSDB 文件名及波形截图，按现场数据安全要求脱敏，禁止发送真实密钥。非空 FSDB 或自检 PASS 均不单独证明内部波形已记录。
 

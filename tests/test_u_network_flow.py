@@ -313,6 +313,23 @@ class UNetworkFlowTests(unittest.TestCase):
         self.assertEqual(old_wave.read_bytes(), old_contents)
         self.assertTrue((second / "tb/waves.fsdb").is_file())
 
+    def test_fast_selection_with_portable_env_command(self):
+        # `env KEY=VALUE command` also works from csh/tcsh terminals, unlike
+        # shell-prefix assignments. The mock does not validate real FSDB data.
+        result = subprocess.run(["env", "AES_LOW_AREA=0", "RUN_FULL=0", "FSDB_FULL=0",
+                                 "RUN_AES=1", "AES_BLOCKS=8", str(self.runner)],
+                                cwd=self.tb, env=self.env, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        run = self.run_dir(result)
+        self.assertIn("-pvalue+tb_mdm_sec.TEST_AES_LOW_AREA=0",
+                      (run / "tb/compile_args.txt").read_text().splitlines())
+        self.assertIn("DIRECTED configuration MAX_BYTES=2048 AES_LOW_AREA=0",
+                      (run / "tb/sim.log").read_text())
+        self.assertIn("PASS 8 AES blocks, 5-cycle latency/II", (run / "aes/sim.log").read_text())
+        self.assertIn("Packet FSDB:        " + str(run / "tb/waves.fsdb"), result.stdout)
+        self.assertIn("Packet VCS database: " + str(run / "tb/simv.daidir"), result.stdout)
+
     def test_fast_mda_and_all_aes_optional(self):
         result = self.run_script(updates={"AES_LOW_AREA": "0", "RUN_FULL": "0", "RUN_AES": "1",
                                           "AES_BLOCKS": "515", "FSDB_MDA": "1"})
