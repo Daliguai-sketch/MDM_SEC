@@ -88,6 +88,10 @@
 | 4 | `int(A || B)`；以输入 B 为完整性原文/密文 | `enc(B)`；长度 B |
 | 5 | `P=enc(B)[0:-4]`，计算 `int(A || P)`；末 4 字节为接收 MAC 并比较 | P；长度 B-4，要求 B≥4 |
 
+![模式 2 的附加加密和模式 5 的解密校验数据流](../figures/mdm_mode2_5.png)
+
+图为模式 2 / 5 的逻辑依赖，不要求硬件逐整包串行；B 中前部数据在依赖允许时可与完整性并发处理。模式 5 中完整性输入只有 `A || P`，接收 MAC 单独送比较，不再进入完整性消息。
+
 模式 2 追加的 MAC 以高字节在前的 4 字节紧接 B；响应中的 `rsp_mac` 仍是加密前的值。模式 5 对应模式 2 的接收布局，不是模式 3 的直接逆过程。模式 5 中，MAC 不匹配时 `rsp_error=0`，`rsp_rx_mac_valid=1` 且 `rsp_mac_match=0`；RTL 不屏蔽明文，系统必须丢弃未认证数据。EIA0 的相等标志只是数值比较，没有认证安全性。
 
 若完整性输入长度为 0，本接口对 EIA1 约定不处理消息块，直接执行长度/最终步骤；EIA3 返回前两个密钥流字的异或；EIA2 仍对 64-bit 协议前缀执行 CMAC。这些 RTL 的空消息行为不替代上层协议的最小消息长度约束。模式 5 的 B 恰好为 4 时，仅解密并检查验证码，无明文输出；模式 2 的 B 为 0 时仍输出 4 字节加密 MAC。
@@ -98,11 +102,52 @@
 
 对 EIA1/EIA3，令 `fresh={BEARER,27'b0}`，完整性通道传给流密码原语的 IV 为 `{COUNT,fresh,COUNT XOR {DIRECTION,31'b0},fresh XOR {16'b0,DIRECTION,15'b0}}`。各加密与完整性通道使用各自 key；key 和字节流的高位表示先出现的字节。
 
+### 2.1.5 EEA0 / EEA1 / EEA2 / EEA3 数据变换
+
+| 算法 | `u_cipher` 的计算步骤 |
+| --- | --- |
+| EEA0 | 选择 32-bit 全零密钥流；输出是输入有效字节，最后不足 4 字节的低位字节清零。 |
+| EEA1 / EEA3 | 分别装载 SNOW 3G / ZUC 的 key 与 `{prefix64,prefix64}`；等待 32 次 INIT 和一次 DISCARD；每个 32-bit 输入/输出实际传输时消费一个密钥流字并前进状态。 |
+| EEA2 | `counter64` 从 0 开始；逐块计算 `KS[j]=AES_K(prefix64 || j)`，计数器每次成功提交 AES 请求后递增；从每个 128-bit 结果高字节到低字节取流。 |
+| 全部 | `out=(in XOR selected_keystream) AND byte_mask`；`out_bytes=min(left,4)`，`left` 只在实际传输后递减。XOR 同样用于加密和解密。 |
+
+![EEA2 计数器、AES 密钥流缓存和数据异或流程](../figures/mdm_eea2.png)
+
+EEA2 的两个 128-bit 密钥流槽允许当前块和下一块重叠，但不保证每个周期都可传输 32 bit；AES 原语延迟、槽占用、输入/输出等待都会影响吞吐。两个通道各有独立原语，不共享计数器或 key。
+
+### 2.1.6 EIA1 / EIA2 / EIA3 计算流程
+
+令消息 `M` 为该模式选择的完整性输入，`L=8*len(M)`，字节和位均按高位先处理。EIA1/EIA3 的 COUNT、BEARER、DIRECTION 体现在 IV 中；EIA2 则将 `prefix64` 明确作为消息前 8 字节。EIA0 的 MAC 恒为零，不提供认证能力。
+
+#### 2.1.6.1 EIA2 / AES-CMAC
+
+![EIA2 子密钥生成、CBC 链和末块处理流程](../figures/mdm_cmac.png)
+
+设 `Dbl(X)=((X<<1) mod 2^128) XOR (X[127] ? 0x87 : 0)`，先计算 `L0=AES_K(0^128)`、`K1=Dbl(L0)`、`K2=Dbl(K1)`。将 `prefix64 || M` 分为 128-bit 块，初始 `X=0`；每个非末块计算 `X=AES_K(X XOR block)`。末块恰好 128 bit 则与 K1 异或；不足 128 bit 则在有效消息后追加单个 `1` bit 和零填充，再与 K2 异或。最终 `T=AES_K(X XOR adjusted_last)`，`MAC=T[127:96]`。
+
+当前接口是整字节，故不满块填充从 `0x80` 开始。空 M 时，CMAC 输入仍有 8 字节前缀，因此末块为 `{prefix64,8'h80,56'b0}` 并使用 K2。每次 AES 结果返回后才能启动依赖它的下一 CBC 块；这不是可按 AES 的块 II 独立流水的消息。
+
+#### 2.1.6.2 EIA1 / SNOW 3G
+
+![EIA1 的 SNOW 密钥流和 GF64 完整性计算流程](../figures/mdm_eia1.png)
+
+用完整性 IV 启动 SNOW 3G，依次取得五个 32-bit 字 `Z0…Z4`，令 `P={Z0,Z1}`、`Q={Z2,Z3}`。将 M 分为高位先的 64-bit 块 `M_i`，末块不足 64 bit 时低位补零；`V0=0`，逐块计算 `V_i=GF64_MUL(V_(i-1) XOR M_i,P)`。之后 `F=GF64_MUL(V_final XOR L,Q)`，`MAC=F[63:32] XOR Z4`。空 M 时不进行消息块乘法，直接从 `V0=0` 进行长度/最终步骤。
+
+GF(2^64) 的约简多项式为 `x^64+x^4+x^3+x+1`；RTL 的移位乘法在最高位溢出时异或低位常数 `0x1b`，一个组合乘法函数在消息 P 步骤和最终 Q 步骤之间复用。输入接口每拍最多接收 32 bit，通常先缓存高 32 bit 再形成 64-bit 消息块。
+
+#### 2.1.6.3 EIA3 / ZUC
+
+![EIA3 的 ZUC 密钥流窗口和消息位累加流程](../figures/mdm_eia3.png)
+
+用完整性 IV 启动 ZUC，按生成顺序定义 32-bit 密钥流字 `Z0,Z1,…` 和从拼接字流第 i 位起的 32-bit 窗口 `W(i)`。初始化累加器 `T=0`；对 `i=0…L-1`，若 M 的第 i 个高位先比特为 1，则 `T=T XOR W(i)`；最后 `MAC=T XOR W(L) XOR Z[ceil(L/32)+1]`。当 L=0 时该式退化为 `Z0 XOR Z1`。
+
+RTL 保持相邻两个 32-bit 密钥流字 `zcur/znext` 并在一个输入字内组合处理最多 32 个消息位；最后部分字仅处理 `8*bytes_now` 个消息位，其中 `bytes_now=min(left,4)`。该描述的 `Z0` 从工作期第一个有效流字开始编号；实际 ZUC 初始丢弃字不计入。
+
 ## 2.2 Microarchitecture Analysis
 
 ### 2.2.1 Top Level Diagram
 
-[[DIAGRAM:mdm]]
+![MDM_SEC 包级顶层结构与两条独立通道](../figures/mdm.png)
 
 | 主要层次 | 角色 |
 | --- | --- |
@@ -114,9 +159,62 @@
 
 两条通道各静态实例化一套 AES、SNOW 3G 和 ZUC 原语；AES 包装器通过参数在低面积、原高速及 5 拍优化实现中静态选择。算法 ID 为运行时选择，不等于同一原语被两个通道共享。
 
+#### 2.2.1.1 u_cipher 机密性通道设计框图
+
+![u_cipher 的算法选择、密钥流和 32 位异或数据路径](../figures/mdm_cipher_lane.png)
+
+图中的四路是按 `alg` 静态存在、运行时选择的逻辑，`u_aes/u_snow/u_zuc` 均位于 `u_cipher` 之下。EEA2 的 `ks0/ks1` 是两个 128-bit **密钥流**暂存槽，不是两个输入包缓存；`ks_index` 按高字先选取其中一个 32-bit 字。`aes_counter` 从 0 开始，`issued` 跟踪已提交的字节范围，槽、AES busy/done 共同参与预取空间预留。
+
+| 内部接口或控制 | 实现及顶层连接 |
+| --- | --- |
+| `start/alg/key/count/bearer/direction/length` | 启动沿锁存算法和参数；顶层在 RUN 产生 `enc_start`，length 为 `enc_len`。 |
+| `in_valid/in_ready/in_data` | 输入为高位在前 32 bit；`in_ready=active && out_ready && available`；`available` 是当前算法流已备好或 EEA0。 |
+| `out_valid/out_ready/out_data/out_bytes` | `out_valid=active && in_valid && available`；顶层把 `out_ready` 接 1，输出被写回共享缓冲。`out_bytes` 为 16-bit 端口，数值 1～4。 |
+| `transfer/done/left` | `transfer=out_valid && out_ready` 时前进数据和对应密钥流；最后字传输后 `done` 脉冲。启动长度为 0 时直接给出 done，不产生数据。 |
+| `state` | IDLE / ACTIVE；从单次 start 到最后一次 32-bit 传输完成；不是跨包流水。 |
+
+#### 2.2.1.2 u_integrity 完整性通道设计框图
+
+用户所称 `u_inte` 在当前 `mdm_sec` RTL 中的实际实例名为 **u_integrity**，模块为 `mdm_integrity`；仓库没有名为 `u_inte` 的实例。后续层次、SDC 和波形应使用实际名称。
+
+![u_integrity 的四种 EIA 计算分支和 MAC 输出](../figures/mdm_integrity_lane.png)
+
+输入的 `length` 是顶层按模式算出的 `int_len`，通道根据剩余字节数对末尾 32-bit 字的低位做屏蔽；`in_valid && in_ready` 才消费消息。`mac/done` 接回顶层的 `calculated_mac/int_done`；通道只计算 MAC，不负责模式 5 的接收 MAC 提取和最终比较。
+
+| 算法 / 状态 | 主要硬件和流程 |
+| --- | --- |
+| EIA0 | start 后 MAC=0 且 done；不消费输入字。 |
+| EIA1 | `SNOW_KEYS -> SNOW_DATA -> SNOW_FINAL`；独立 `u_snow` 产生 5 字密钥流，64-bit `p/q/eval_reg` 与复用 GF64 乘法器计算；空消息从 KEYS 直接到 FINAL。 |
+| EIA2 | `AES_L_REQ/WAIT -> AES_COLLECT -> AES_BLOCK_REQ/WAIT`；独立 `u_aes` 生成 L、K1/K2 和逐块 CBC 链，非末块返回 COLLECT；空消息在 L_WAIT 后直接计算前缀末块。 |
+| EIA3 | `ZUC_FIRST -> ZUC_SECOND -> ZUC_DATA`；独立 `u_zuc`、`zcur/znext/zacc` 和消息位窗口形成 MAC；空消息在 SECOND 结束。 |
+| 参数 | `AES_LOW_AREA=2` 时，仅此通道由 `AES_INTEGRITY_TIMING_OPT` 选择时序候选或原 balanced；仓库的 `u_cipher` 不受此开关影响。 |
+
+#### 2.2.1.3 u_cipher 与 u_integrity 交互设计框图
+
+![两通道经共享缓冲和控制器交互](../figures/mdm_interaction.png)
+
+两路之间没有直接的数据端口相连：cipher 从缓冲 rd0 读取 B 并将变换结果同步原地写回，integrity 从 rd1 读取 A 和所需版本的 B。顶层在模式 2 从 `mac_q` 拼接待加密的 4 字节，在模式 5 通过 `rx_mac_q` 滚动保存解密流最后四字节并与计算 MAC 比较。缓冲读旧值、写提交顺序和指针门控见 2.2.5；图中线条不表示新增寄存器或外部接口。
+
+| 顶层信号 | 含义 / 交互点 |
+| --- | --- |
+| `enc_start` / `int_start` | RUN 中分别在所需通道尚未启动时有效；模式 2～5 两个通道同沿启动。 |
+| `enc_pos` / `int_pos` | 分别记录已写回 cipher 字节数和已消费完整性字节数。 |
+| `enc_mem_ready` / `enc_mac_ready` | 模式 2/4 防覆盖原数据；模式 2 追加 MAC 的字还等待完整性完成。 |
+| `int_dep_ready` | 模式 3/5 对产生结果的 B 区域仅允许读取先前沿已写回的数据；完整性可先消费 A。 |
+| `calculated_mac` / `mac_q` | `int_done` 后顶层锁存的计算 MAC；模式 2 用于追加，模式 5 用于比较。 |
+| `rx_mac_q` / `rsp_mac_match` | 模式 5 按 cipher 输出滚动获取末四字节；与计算 MAC 数值比较，认证失败不阻止输出。 |
+
 ### 2.2.2 Timing Requirement
 
 所有接口和内部寄存器属于同一 `clk` 域，`rst_n` 异步低有效；本设计不含 reset release 同步器或 CDC 桥。每次接口传输由对应 valid/ready 在上升沿同时为 1 定义。物理输入延迟、输出延迟、频率、时钟不确定度、复位 recovery/removal 由集成约束提供，当前为 TBD。
+
+![顶层命令、装载、两通道启动、响应及输出的状态时序](../figures/mdm_protocol.png)
+
+该图是阶段顺序示意，列宽**不代表固定周期数**。例子假设 A、B、输出各 1 beat，两条通道启用，响应和输出各遇一次反压；`rsp_valid`/`cipher_valid` 在被阻塞时保持，握手后才转入下一阶段。零长度、非法命令、多 beat 或不同算法的时序不同。
+
+![模式 4 旁路算法的逐沿握手和反压示例](../figures/mdm_packet_timing.png)
+
+逐沿图为一个可由 `tests/rtl/tb_spec_timing.sv` 自检的具体例子：模式 4、EEA0/EIA0、A=5 字节、B=3 字节。E0 命令、E1 A、E2 B，E3 两路启动；E6 沿后 `rsp_valid=1`，E7 暂停，E8 响应握手；E8 沿后 `cipher_valid=1`，E9 暂停，E10 输出握手返回 IDLE。输出为 `667788`、`keep=e000`、`last=1`。此示例使用 NULL 算法，不是 SNOW/AES/ZUC 的固定整包延迟承诺。
 
 | 阶段 | 时序和行为 |
 | --- | --- |
@@ -158,7 +256,29 @@
 | 4 | integrity 消费原始 A/B；cipher 写回不能覆盖尚未被 integrity 读取的原 B，允许同沿读旧值。 |
 | 5 | cipher 解密整个 B；integrity 可先消费 A，之后等待此前沿写回的明文。末 4 字节经滚动窗口提取，不进入明文输出/认证输入。 |
 
+![共享缓冲原文读旧值和结果写后读的依赖时序](../figures/mdm_dependencies.png)
+
 `enc_mem_ready` 实现模式 2/4 原文覆盖保护；`enc_mac_ready` 防止模式 2 过早使用附加 MAC；`int_dep_ready` 限制模式 3/5 消费尚未提交的结果。这里的同拍“读旧值”依赖 `mdm_packet_buffer` 的异步读/同步写语义；替换成 SRAM 时必须满足等价语义，或重新设计调度。
+
+以下为 RTL 指针门控的等价整理，字节位置以缓冲 A 起点为 0；`enc_pos` 相对 B，`int_pos` 相对 A。`int_take=int_in_valid && int_in_ready`；`enc_chunk/int_chunk` 均为当前最多 4 字节的请求长度。
+
+```text
+int_end = int_pos + int_chunk
+result_needed = max(int_end - a_len, 0)
+int_dep_ready = (mode not in {3,5}) OR (enc_pos >= result_needed)
+
+old_b_end = min(enc_pos + enc_chunk, b_len)
+old_input_end = a_len + old_b_end
+int_read_end = int_take ? int_end : int_pos
+enc_mem_ready = (mode not in {2,4}) OR (enc_pos >= b_len)
+                OR (int_alg == EIA0) OR int_finished
+                OR (old_input_end <= int_read_end)
+enc_mac_ready = (mode != 2) OR (enc_chunk <= enc_b_left) OR int_finished
+enc_in_valid = RUN AND enc_started AND not enc_finished
+               AND (enc_pos < enc_len) AND enc_mem_ready AND enc_mac_ready
+```
+
+模式 2/4 若同沿 `int_take` 读取原字，则 `int_read_end` 已包含这次读取，可允许 cipher 同沿写回；模式 3/5 的 `enc_pos` 是先前写回沿之后更新的寄存器，因此新结果最早在下一沿供 integrity 消费。模式 2 若一个 32-bit 字横跨 B 尾和 MAC 首字节，即使只有一字节属于 MAC，也需等 `int_finished` 后整体传输。
 
 ### 2.2.6 State Machine
 

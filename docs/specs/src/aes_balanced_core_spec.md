@@ -56,15 +56,66 @@
 
 ## 2.1 Background (Algorithm Principle)
 
-AES 将 16 字节按列映射为 4×4 字节状态。输入块先与初始 key 异或；第 1～9 轮依次执行 SubBytes、ShiftRows、MixColumns、AddRoundKey，第 10 轮省略 MixColumns。端口使用 MSB-first：第 0 字节位于 `[127:120]`。
+### 2.1.1 块加密与两轮展开
 
-设一个列输入为 `{a,b,c,d}`，GF(2^8) 模多项式为 `0x11b`，第一输出字节为 `02*a XOR 03*b XOR c XOR d`，其余字节按 AES 循环矩阵计算。`aes_mix_column_balanced` 将该固定线性矩阵重写为共享 XOR 网络；进入/退出电路时转换字节顺序，以匹配本工程的高字节在前约定。网络源代码包含 88 个两输入 XOR 节点、最大逻辑深度 5；综合工具可以重排、复制或合并这些节点。
+![AES-128 加密算法及各轮操作流程](../figures/aes_flow.png)
+
+输入和输出都是 128 bit，`s[r,c]=block_in[127-8*(4*c+r) -: 8]`。先 `S0=block_in XOR K0`；第 1～9 轮依次做 SubBytes、ShiftRows、MixColumns、AddRoundKey，第 10 轮省略 MixColumns。`pair=0…4` 的每一拍分别组合执行两轮；算法图的方框不代表独立寄存器。
+
+设列 `{a,b,c,d}`，GF(2^8) 模多项式为 `0x11b`；矩阵与 `mdm_aes128` 通用规格一致：
+
+```text
+[02 03 01 01]   [a]     [02*a XOR 03*b XOR c XOR d]
+[01 02 03 01] x [b]  =  [a XOR 02*b XOR 03*c XOR d]
+[01 01 02 03]   [c]     [a XOR b XOR 02*c XOR 03*d]
+[03 01 01 02]   [d]     [03*a XOR b XOR c XOR 02*d]
+```
+
+`02*x=xtime(x)=((x<<1)&0xff) XOR (x[7] ? 0x1b : 0)`；`03*x=xtime(x) XOR x`。原 `aes_mix_column_balanced` 将该矩阵重写成 88 个两输入 XOR、最大逻辑深度 5 的共享网络；时序候选使用不同的浅层 XOR 实现。字节排列和数学输出一致，综合网表可以重排或复制这些节点。
+
+### 2.1.2 S 盒与轮密钥的具体形式
+
+![AES S 盒的有限域逆元和仿射变换](../figures/aes_sbox_map.png)
+
+S 盒的数学映射是 GF(2^8)/`0x11b` 乘法逆元（0 的逆约定为 0），再做 `v XOR ROTL8(v,1) XOR ROTL8(v,2) XOR ROTL8(v,3) XOR ROTL8(v,4) XOR 0x63`。例如 `S(0x53)=0xed`。RTL 使用组合布尔网络；图不是要求综合实现独立逆元单元。原版的数据 S 盒保留 top/nonlinear/bottom 层次；时序候选仅将**数据** S 盒内部合并，密钥扩展 S 盒仍保留原层次。
+
+完整正向 S 盒见下表：行首表示输入的高四位，列表示低四位，十六进制字节为输出。例如 `50` 行第 `3` 列是 `ed`。
+
+#### 2.1.2.1 AES S 盒完整表 (SBOX_AES)
+
+```text
+hi/lo  0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00     63 7c 77 7b f2 6b 6f c5 30 01 67 2b fe d7 ab 76
+10     ca 82 c9 7d fa 59 47 f0 ad d4 a2 af 9c a4 72 c0
+20     b7 fd 93 26 36 3f f7 cc 34 a5 e5 f1 71 d8 31 15
+30     04 c7 23 c3 18 96 05 9a 07 12 80 e2 eb 27 b2 75
+40     09 83 2c 1a 1b 6e 5a a0 52 3b d6 b3 29 e3 2f 84
+50     53 d1 00 ed 20 fc b1 5b 6a cb be 39 4a 4c 58 cf
+60     d0 ef aa fb 43 4d 33 85 45 f9 02 7f 50 3c 9f a8
+70     51 a3 40 8f 92 9d 38 f5 bc b6 da 21 10 ff f3 d2
+80     cd 0c 13 ec 5f 97 44 17 c4 a7 7e 3d 64 5d 19 73
+90     60 81 4f dc 22 2a 90 88 46 ee b8 14 de 5e 0b db
+a0     e0 32 3a 0a 49 06 24 5c c2 d3 ac 62 91 95 e4 79
+b0     e7 c8 37 6d 8d d5 4e a9 6c 56 f4 ea 65 7a ae 08
+c0     ba 78 25 2e 1c a6 b4 c6 e8 dd 74 1f 4b bd 8b 8a
+d0     70 3e b5 66 48 03 f6 0e 61 35 57 b9 86 c1 1d 9e
+e0     e1 f8 98 11 69 d9 8e 94 9b 1e 87 e9 ce 55 28 df
+f0     8c a1 89 0d bf e6 42 68 41 99 2d 0f b0 54 bb 16
+```
+
+![AES-128 轮密钥扩展流程](../figures/aes_key_schedule.png)
+
+对旧密钥四个 32-bit 字 `w0…w3`，`t=SubWord(RotWord(w3)) XOR {Rcon,24'b0}`，然后 `w0'=w0 XOR t`、`w1'=w1 XOR w0'`、`w2'=w2 XOR w1'`、`w3'=w3 XOR w2'`；`K'={w0',w1',w2',w3'}`。Rcon 依次为 `01 02 04 08 10 20 40 80 1b 36`。每个周期两级密钥扩展产生对应两轮的 `key1/key2`，第二级采用 2.2.5 的等价化简公式。
+
+![AddRoundKey 对应字节/位异或流程](../figures/aes_add_key.png)
+
+AddRoundKey 是状态和相应 128-bit 轮密钥的逐位 XOR：输入先与 K0 异或，普通轮用 K1～K9，末轮用 K10。FIPS 示例 key `000102030405060708090a0b0c0d0e0f` 的 K1 为 `d6aa74fdd2af72fadaa678f1d6ab76fe`；`00112233445566778899aabbccddeeff XOR K0 = 00102030405060708090a0b0c0d0e0f0`。
 
 ## 2.2 Microarchitecture Analysis
 
 ### 2.2.1 Top Level Diagram
 
-[[DIAGRAM:aes_balanced]]
+![5 拍 balanced AES 逻辑数据路径与轮密钥扩展](../figures/aes_balanced.png)
 
 图中两个轮函数和两次密钥扩展在一个时钟周期内组合串接；图中间的两个轮不是两个寄存器流水级。图为逻辑示意，时序候选将普通反馈和末轮结果分开。每个包装器一次只实例化串行版、原高速版或两个 balanced 版本之一。
 
@@ -77,6 +128,10 @@ AES 将 16 字节按列映射为 4×4 字节状态。输入块先与初始 key �
 | 两个通道 | `mdm_sec` 的 cipher、integrity 各有自己的包装器、密钥和 AES 状态。 |
 
 ### 2.2.2 Timing Requirement
+
+![5 拍 AES 两块最早连续交接时序](../figures/aes_pair_timing.png)
+
+波形中的竖线为采样沿；`start` 在 E0/E5 沿前有效，`done`、`block_out` 和 `pair` 为沿后值。E5 既输出前块 A 又接收后块 B，两个沿之间 `busy` 不必拉低；该图适用于两个 balanced 实现和原高速版。
 
 | 时刻 | 行为 |
 | --- | --- |

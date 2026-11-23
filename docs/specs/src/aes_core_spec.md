@@ -57,17 +57,80 @@ CTR 模式加解密和 CMAC 完整性属于外围 `mdm_cipher` / `mdm_integrity`
 
 ## 2.1 Background (Algorithm Principle)
 
-AES 将 16 字节按列组织为 4×4 字节状态矩阵。输入块首先与初始密钥异或；第 1～9 轮依次完成 SubBytes、ShiftRows、MixColumns 和 AddRoundKey；第 10 轮不做 MixColumns。不同字节替换和固定行置换可以交换实施顺序，但需要保持同一标准字节映射。
+### 2.1.1 AES-128 加密流程
 
-对于当前 MSB-first 接口，状态第 0 字节位于 `[127:120]`。`mdm_aes_shift_rows` 在第 c 列、第 r 行输出来自第 `(c+r) mod 4` 列的对应字节。低面积设计在列计算时先连线 ShiftRows，再调用 4 字节 SubBytes；该置换与逐字节替换的组合等价于标准轮操作。
+![AES-128 加密算法及各轮操作流程](../figures/aes_flow.png)
 
-密钥按 32-bit 字 `w0,w1,w2,w3` 排列。每轮首先执行 `t = SubWord(RotWord(w3)) XOR {Rcon,24'b0}`，再计算 `w0'=w0 XOR t`、`w1'=w1 XOR w0'`、`w2'=w2 XOR w1'`、`w3'=w3 XOR w2'`。Rcon 在 GF(2^8) 中更新；本核按请求在线产生轮密钥，不对外输出轮密钥。
+输入为明文 `P` 和 128-bit key `K0`。先执行 `S0=P XOR K0`；第 1～9 轮执行 `Sr=AddRoundKey(MixColumns(ShiftRows(SubBytes(Sr-1))),Kr)`；第 10 轮执行 `C=AddRoundKey(ShiftRows(SubBytes(S9)),K10)`，**不执行 MixColumns**。图为数学步骤；串行核和 5 拍核的实际复用、寄存器位置见后续微架构和时序图，不表示图中的每个方框都是一级流水。
+
+### 2.1.2 状态矩阵和轮内线性变换
+
+将输入 16 字节从高位到低位编号 0～15。状态按列填充，`s[r,c]=block_in[127-8*(4*c+r) -: 8]`；例如第 0 列为输入字节 0、1、2、3。SubBytes 对每个字节独立应用同一 S 盒；ShiftRows 第 r 行循环左移 r 个字节，即输出 `s'[r,c]=s[r,(c+r) mod 4]`。
+
+MixColumns 对每个 4 字节列 `{a,b,c,d}` 乘以下列固定矩阵；所有加法为 XOR，乘法在模 `x^8+x^4+x^3+x+1`（`0x11b`）的 GF(2^8) 中计算。`02*x=xtime(x)=((x<<1)&0xff) XOR (x[7] ? 0x1b : 0)`，`03*x=xtime(x) XOR x`。
+
+```text
+[02 03 01 01]   [a]     [02*a XOR 03*b XOR c XOR d]
+[01 02 03 01] x [b]  =  [a XOR 02*b XOR 03*c XOR d]
+[01 01 02 03]   [c]     [a XOR b XOR 02*c XOR 03*d]
+[03 01 01 02]   [d]     [03*a XOR b XOR c XOR 02*d]
+```
+
+低面积 RTL 先以连线完成 ShiftRows 再对选中的 4 字节应用 SubBytes；由于替换对各字节相同且相互独立，两操作可交换而不改变标准结果。原 balanced 使用共享 XOR 列网络，时序候选使用浅层列网络，均与上述矩阵等价。
+
+### 2.1.3 AES S 盒的具体形式
+
+![AES S 盒的有限域逆元和仿射变换](../figures/aes_sbox_map.png)
+
+对输入字节 `x`，先在 GF(2^8)/`0x11b` 中求乘法逆元 `v`，约定 `x=0` 时 `v=0`；随后 `S(x)=v XOR ROTL8(v,1) XOR ROTL8(v,2) XOR ROTL8(v,3) XOR ROTL8(v,4) XOR 0x63`。例如 `S(0x53)=0xed`，`S(0x00)=0x63`。该逆元加仿射变换是**数学定义**；本 RTL 的 S 盒为组合布尔网络，并非必然例化逆元运算器或 ROM。
+
+下表列出正向 AES S 盒全部 256 个输出。行首为输入高四位加 0，表头为低四位；例如行 `50`、列 `3` 为输入 `0x53`。字节值均为十六进制。表也用于密钥扩展中的 SubWord。
+
+#### 2.1.3.1 AES S 盒完整表 (SBOX_AES)
+
+```text
+hi/lo  0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00     63 7c 77 7b f2 6b 6f c5 30 01 67 2b fe d7 ab 76
+10     ca 82 c9 7d fa 59 47 f0 ad d4 a2 af 9c a4 72 c0
+20     b7 fd 93 26 36 3f f7 cc 34 a5 e5 f1 71 d8 31 15
+30     04 c7 23 c3 18 96 05 9a 07 12 80 e2 eb 27 b2 75
+40     09 83 2c 1a 1b 6e 5a a0 52 3b d6 b3 29 e3 2f 84
+50     53 d1 00 ed 20 fc b1 5b 6a cb be 39 4a 4c 58 cf
+60     d0 ef aa fb 43 4d 33 85 45 f9 02 7f 50 3c 9f a8
+70     51 a3 40 8f 92 9d 38 f5 bc b6 da 21 10 ff f3 d2
+80     cd 0c 13 ec 5f 97 44 17 c4 a7 7e 3d 64 5d 19 73
+90     60 81 4f dc 22 2a 90 88 46 ee b8 14 de 5e 0b db
+a0     e0 32 3a 0a 49 06 24 5c c2 d3 ac 62 91 95 e4 79
+b0     e7 c8 37 6d 8d d5 4e a9 6c 56 f4 ea 65 7a ae 08
+c0     ba 78 25 2e 1c a6 b4 c6 e8 dd 74 1f 4b bd 8b 8a
+d0     70 3e b5 66 48 03 f6 0e 61 35 57 b9 86 c1 1d 9e
+e0     e1 f8 98 11 69 d9 8e 94 9b 1e 87 e9 ce 55 28 df
+f0     8c a1 89 0d bf e6 42 68 41 99 2d 0f b0 54 bb 16
+```
+
+### 2.1.4 轮密钥生成与轮密钥加
+
+![AES-128 轮密钥扩展流程](../figures/aes_key_schedule.png)
+
+把当前 key 高位到低位分成 32-bit 的 `w0,w1,w2,w3`，对第 r 轮先将 `w3` 高字节旋转到最低字节，再对四个字节分别查 AES S 盒，并在最高字节异或本轮常数：
+
+```text
+t   = SubWord(RotWord(w3)) XOR {Rcon[r], 24'b0}
+w0' = w0 XOR t       w1' = w1 XOR w0'
+w2' = w2 XOR w1'     w3' = w3 XOR w2'
+Kr  = {w0', w1', w2', w3'}
+Rcon[1..10] = 01 02 04 08 10 20 40 80 1b 36
+```
+
+![AddRoundKey 对应字节/位异或流程](../figures/aes_add_key.png)
+
+轮密钥加只是 128 对对应位的 XOR，不包含 S 盒或模加：初始步骤使用 `K0`，普通轮使用 `K1…K9`，末轮使用 `K10`。例如 FIPS 示例 key `000102030405060708090a0b0c0d0e0f` 的 `K1=d6aa74fdd2af72fadaa678f1d6ab76fe`；输入 `00112233445566778899aabbccddeeff` 经初始轮密钥加后为 `00102030405060708090a0b0c0d0e0f0`。轮密钥按块在线计算，不通过本核端口输出。
 
 ## 2.2 Microarchitecture Analysis
 
 ### 2.2.1 Top Level Diagram
 
-[[DIAGRAM:aes]]
+![AES-128 包装器及静态选择的配置](../figures/aes.png)
 
 图中参数选择为静态 generate，不是按块可变的运行时模式。各实现的端口及标准答案一致，但低面积版与 5 拍版的延迟和连续请求边界不同。`AES_LOW_AREA=2` 可进一步选择原 balanced 或时序候选；设计不将多个实现的逻辑同时作为运行时备份使用。
 
@@ -82,7 +145,11 @@ AES 将 16 字节按列组织为 4×4 字节状态矩阵。输入块首先与初
 
 ### 2.2.2 Timing Requirement
 
-下表从请求实际被采样的 E0 计数；`done` 和 `block_out` 是对应上升沿之后寄存器更新的值。`ready` 在最后计算沿之前为 1，因而 E50/E5 可同时退休旧块并接受新块。
+下表从请求实际被采样的 E0 计数；`done` 和 `block_out` 是对应上升沿之后寄存器更新的值。`ready` 在最后计算沿之前为 1，因而 E50/E5 可同时退休旧块并接受新块。波形中的竖线是采样沿，信号值画在两沿之间；`pair`/结果为沿后值。第一个图在 E5 同沿完成 A、接收 B；第二个图中间省略第 2～9 轮，仅示单块。
+
+![AES 5 拍模式连续块请求与结果时序](../figures/aes_pair_timing.png)
+
+![AES 50 拍串行模式时序及列复用](../figures/aes_serial_timing.png)
 
 | 配置 | 接受 | 运算沿 | 完成和最早下次接受 | 延迟 / II |
 | --- | --- | --- | --- | --- |

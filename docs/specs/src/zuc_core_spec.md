@@ -56,6 +56,12 @@ MDM_SEC 中 `mdm_cipher` 的独立实例为 EEA3 提供密钥流；`mdm_integrit
 
 ZUC 状态包含 16 个 31-bit LFSR 字和两个 32-bit 非线性寄存器。BR 从 LFSR 重组 X0～X3；函数 F 根据 X0～X2、R1、R2 形成 W 和下一组 R1/R2；输出密钥流字为 `W XOR X3`。LFSR 使用模 `p=2^31-1` 的运算。
 
+![ZUC 装载、初始化、丢弃与工作流程](../figures/zuc_flow.png)
+
+![ZUC 比特重组、非线性函数和反馈数据路径](../figures/zuc_round.png)
+
+图中 INIT 注入的是 `W[31:1]` 而不是 `Z`；DISCARD 和 WORK 不注入 W。BR、F、L1/L2 和 S 盒都属于一个状态步内的组合逻辑，不代表多个独立时钟流水级。
+
 RTL 的 BR 和非线性逻辑（右端均取更新前状态）如下；32-bit 加法按模 2^32 截断：
 
 ```text
@@ -89,17 +95,77 @@ LFSR 反馈等价于在模 p 下相加 `s0 + 2^8*s0 + 2^20*s4 + 2^21*s10 + 2^17*
 | 6 | 7135 | 14 | 789a |
 | 7 | 09af | 15 | 47ac |
 
+### 2.1.2 S0 / S1 替换的具体形式
+
+`subword` 的 32-bit 输入从最高字节到最低字节分别查 `S0、S1、S0、S1`，四个输出保持原字节位置后拼接；两个并行分支分别对 L1 和 L2 的结果使用相同顺序。`S0` 和 `S1` 是两个不同的 8→8 bit 表，不是 AES 的 S 盒。例如 `S0(00)=3e`、`S1(00)=55`，所以 `subword(00000000)=3e553e55`。
+
+下方完整表行首为输入高四位、列号为低四位，输出为十六进制字节；RTL 在 `rtl/mdm_sboxes.vh` 中以组合 case 函数给出，综合后是否映射成 ROM 或门逻辑由实现决定。
+
+#### 2.1.2.1 ZUC S0 完整表 (SBOX_ZUC_S0)
+
+```text
+hi/lo  0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00     3e 72 5b 47 ca e0 00 33 04 d1 54 98 09 b9 6d cb
+10     7b 1b f9 32 af 9d 6a a5 b8 2d fc 1d 08 53 03 90
+20     4d 4e 84 99 e4 ce d9 91 dd b6 85 48 8b 29 6e ac
+30     cd c1 f8 1e 73 43 69 c6 b5 bd fd 39 63 20 d4 38
+40     76 7d b2 a7 cf ed 57 c5 f3 2c bb 14 21 06 55 9b
+50     e3 ef 5e 31 4f 7f 5a a4 0d 82 51 49 5f ba 58 1c
+60     4a 16 d5 17 a8 92 24 1f 8c ff d8 ae 2e 01 d3 ad
+70     3b 4b da 46 eb c9 de 9a 8f 87 d7 3a 80 6f 2f c8
+80     b1 b4 37 f7 0a 22 13 28 7c cc 3c 89 c7 c3 96 56
+90     07 bf 7e f0 0b 2b 97 52 35 41 79 61 a6 4c 10 fe
+a0     bc 26 95 88 8a b0 a3 fb c0 18 94 f2 e1 e5 e9 5d
+b0     d0 dc 11 66 64 5c ec 59 42 75 12 f5 74 9c aa 23
+c0     0e 86 ab be 2a 02 e7 67 e6 44 a2 6c c2 93 9f f1
+d0     f6 fa 36 d2 50 68 9e 62 71 15 3d d6 40 c4 e2 0f
+e0     8e 83 77 6b 25 05 3f 0c 30 ea 70 b7 a1 e8 a9 65
+f0     8d 27 1a db 81 b3 a0 f4 45 7a 19 df ee 78 34 60
+```
+
+#### 2.1.2.2 ZUC S1 完整表 (SBOX_ZUC_S1)
+
+```text
+hi/lo  0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00     55 c2 63 71 3b c8 47 86 9f 3c da 5b 29 aa fd 77
+10     8c c5 94 0c a6 1a 13 00 e3 a8 16 72 40 f9 f8 42
+20     44 26 68 96 81 d9 45 3e 10 76 c6 a7 8b 39 43 e1
+30     3a b5 56 2a c0 6d b3 05 22 66 bf dc 0b fa 62 48
+40     dd 20 11 06 36 c9 c1 cf f6 27 52 bb 69 f5 d4 87
+50     7f 84 4c d2 9c 57 a4 bc 4f 9a df fe d6 8d 7a eb
+60     2b 53 d8 5c a1 14 17 fb 23 d5 7d 30 67 73 08 09
+70     ee b7 70 3f 61 b2 19 8e 4e e5 4b 93 8f 5d db a9
+80     ad f1 ae 2e cb 0d fc f4 2d 46 6e 1d 97 e8 d1 e9
+90     4d 37 a5 75 5e 83 9e ab 82 9d b9 1c e0 cd 49 89
+a0     01 b6 bd 58 24 a2 5f 38 78 99 15 90 50 b8 95 e4
+b0     d0 91 c7 ce ed 0f b4 6f a0 cc f0 02 4a 79 c3 de
+c0     a3 ef ea 51 e6 6b 18 ec 1b 2c 80 f7 74 e7 ff 21
+d0     5a 6a 54 1e 41 31 92 35 c4 33 07 0a ba 7e 0e 34
+e0     88 b1 98 7c f3 3d 60 6c 7b ca d3 1f 32 65 04 28
+f0     64 be 85 9b 2f 59 8a d7 b0 25 ac af 12 03 e2 f2
+```
+
+### 2.1.3 状态步和模运算边界
+
+一次状态更新先由旧 `s[]/R1/R2` 同时产生 `X0…X3`、`W/W1/W2`、新 R1/R2 和 LFSR 反馈；在沿上并行写回，输出 Z 取当前旧状态。`add31(a,b)` 把 31-bit 加法的进位回卷到低位；`rot31(s,n)` 对 31 bit 循环左移 n 位，对应模 `2^31-1` 的 `2^n` 倍。若反馈运算结果为全零，RTL 装载 `31'h7fffffff` 表示模数域中的零。
+
+`L1` 和 `L2` 分别是固定旋转与 XOR 组合，输入拼接次序见 2.1 方程；先线性变换、后 S 盒替换，不可将两者位置交换。32-bit 的 F 加法按模 `2^32` 截断，与 LFSR 的模 `2^31-1` 加法不是同一种运算。
+
 ## 2.2 Microarchitecture Analysis
 
 ### 2.2.1 Top Level Diagram
 
-[[DIAGRAM:zuc]]
+![ZUC-128 原语顶层数据及反馈关系](../figures/zuc.png)
 
 工作时 BR 和 F 在同一组合周期由当前寄存器值计算；INIT 将 W 的高 31 bit 注入 LFSR。图中的逻辑块不代表各有一级寄存器或深流水。
 
 ### 2.2.2 Timing Requirement
 
 假设 E0 采样 `start=1`，其后无复位或重新启动；输出按上升沿前后的区别描述。
+
+![ZUC 初始化、首字与暂停时序](../figures/stream_timing.png)
+
+图中 E34 沿消费 Z0，E35/E36 停顿而保持 Z1，E37 沿消费 Z1 后显示 Z2。`valid=1` 的沿后首字与随后采样沿不是同一事件。
 
 | 时刻 | RTL 行为 | 输出 / 接收 |
 | --- | --- | --- |

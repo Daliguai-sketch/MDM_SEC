@@ -56,6 +56,10 @@
 
 SNOW 3G 由 16×32-bit LFSR 和三个 32-bit 非线性 FSM 寄存器组成。采用 32 次混合反馈初始化和一次丢弃后，工作阶段每次更新输出一个 32-bit 密钥流字。需要多少个字以及按何种协议解释 IV 由上层决定。
 
+![SNOW 3G 装载、初始化、丢弃与工作流程](../figures/snow_flow.png)
+
+图中的反馈注入仅在 INIT 生效；DISCARD 仍更新 FSM 和 LFSR，但不用 F 注入 LFSR，也不对外产生有效首字。WORK 阶段当前状态产生 `Z`，在 `advance=1` 的采样沿消费该字并同时更新状态；停顿保持原字。
+
 以下运算中，`+` 是模 2^32 加法，`XOR` 为按位异或，所有右端均取更新前状态。RTL 的组合方程为：
 
 ```text
@@ -88,17 +92,97 @@ v = (s[0] << 8) XOR MULalpha(s[0][31:24]) XOR s[2]
 
 启动时 `r1/r2/r3=0`，`init_count=0`。该核直接采样提供的 IV；EEA1/EIA1 的 COUNT/BEARER/DIRECTION 打包是外围责任，不可将协议字段直接当作本核端口。
 
+### 2.1.2 S1 / S2 字变换和 S 盒
+
+![SNOW 3G S1 和 S2 的字节替换及线性变换](../figures/snow_s_transform.png)
+
+对 32-bit 输入从高到低拆为四字节，分别查表得到 `{a,b,c,d}`，然后执行下面的 4×4 字节矩阵。S1 采用 AES 正向 S 盒并以 `0x1b` 做 `xtime` 约简；S2 采用 SNOW SQ 表并以 `0x69` 约简。下式为 SNOW 的**实际矩阵**，不要误当作 AES MixColumns 的排列：
+
+```text
+[y0]   [02 01 01 03]   [a]
+[y1] = [03 02 01 01] x [b]
+[y2]   [01 03 02 01]   [c]
+[y3]   [01 01 03 02]   [d]
+02*x = ((x << 1) & 0xff) XOR (x[7] ? poly : 0)
+03*x = 02*x XOR x;  poly = 0x1b (S1) or 0x69 (S2)
+S1(w) = {y0,y1,y2,y3} with AES S-box
+S2(w) = {y0,y1,y2,y3} with SQ S-box
+```
+
+例如 `SQ(0x00)=0x25`、`SQ(0xff)=0x86`。完整表的行首是输入高四位，列号是低四位；数值均为十六进制字节。AES 表在 S1 的四个字节上逐个使用，SQ 表用于 S2 的四个字节；它们不是两次串接在同一字节上的表。
+
+#### 2.1.2.1 S1 的 AES 正向 S 盒 (SBOX_AES)
+
+```text
+hi/lo  0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00     63 7c 77 7b f2 6b 6f c5 30 01 67 2b fe d7 ab 76
+10     ca 82 c9 7d fa 59 47 f0 ad d4 a2 af 9c a4 72 c0
+20     b7 fd 93 26 36 3f f7 cc 34 a5 e5 f1 71 d8 31 15
+30     04 c7 23 c3 18 96 05 9a 07 12 80 e2 eb 27 b2 75
+40     09 83 2c 1a 1b 6e 5a a0 52 3b d6 b3 29 e3 2f 84
+50     53 d1 00 ed 20 fc b1 5b 6a cb be 39 4a 4c 58 cf
+60     d0 ef aa fb 43 4d 33 85 45 f9 02 7f 50 3c 9f a8
+70     51 a3 40 8f 92 9d 38 f5 bc b6 da 21 10 ff f3 d2
+80     cd 0c 13 ec 5f 97 44 17 c4 a7 7e 3d 64 5d 19 73
+90     60 81 4f dc 22 2a 90 88 46 ee b8 14 de 5e 0b db
+a0     e0 32 3a 0a 49 06 24 5c c2 d3 ac 62 91 95 e4 79
+b0     e7 c8 37 6d 8d d5 4e a9 6c 56 f4 ea 65 7a ae 08
+c0     ba 78 25 2e 1c a6 b4 c6 e8 dd 74 1f 4b bd 8b 8a
+d0     70 3e b5 66 48 03 f6 0e 61 35 57 b9 86 c1 1d 9e
+e0     e1 f8 98 11 69 d9 8e 94 9b 1e 87 e9 ce 55 28 df
+f0     8c a1 89 0d bf e6 42 68 41 99 2d 0f b0 54 bb 16
+```
+
+#### 2.1.2.2 S2 的 SQ S 盒 (SBOX_SNOW_SQ)
+
+```text
+hi/lo  0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00     25 24 73 67 d7 ae 5c 30 a4 ee 6e cb 7d b5 82 db
+10     e4 8e 48 49 4f 5d 6a 78 70 88 e8 5f 5e 84 65 e2
+20     d8 e9 cc ed 40 2f 11 28 57 d2 ac e3 4a 15 1b b9
+30     b2 80 85 a6 2e 02 47 29 07 4b 0e c1 51 aa 89 d4
+40     ca 01 46 b3 ef dd 44 7b c2 7f be c3 9f 20 4c 64
+50     83 a2 68 42 13 b4 41 cd ba c6 bb 6d 4d 71 21 f4
+60     8d b0 e5 93 fe 8f e6 cf 43 45 31 22 37 36 96 fa
+70     bc 0f 08 52 1d 55 1a c5 4e 23 69 7a 92 ff 5b 5a
+80     eb 9a 1c a9 d1 7e 0d fc 50 8a b6 62 f5 0a f8 dc
+90     03 3c 0c 39 f1 b8 f3 3d f2 d5 97 66 81 32 a0 00
+a0     06 ce f6 ea b7 17 f7 8c 79 d6 a7 bf 8b 3f 1f 53
+b0     63 75 35 2c 60 fd 27 d3 94 a5 7c a1 05 58 2d bd
+c0     d9 c7 af 6b 54 0b e0 38 04 c8 9d e7 14 b1 87 9c
+d0     df 6f f9 da 2a c4 59 16 74 91 ab 26 61 76 34 2b
+e0     ad 99 fb 72 ec 33 12 de 98 3b c0 9b 3e 18 10 3a
+f0     56 e1 77 c9 1e 9e 95 a3 90 19 a8 6c 09 d0 f0 86
+```
+
+### 2.1.3 LFSR 反馈常量变换
+
+对单字节 `x`，令 `MULx(x,p)=((x<<1)&0xff) XOR (x[7] ? p : 0)`，`MULxPOW(x,n,p)` 为重复 n 次此运算。SNOW 的两个 8→32 bit 常量映射的四个高到低输出字节分别为：
+
+```text
+MULalpha(x) = {MULxPOW(x,23,0xa9), MULxPOW(x,245,0xa9),
+               MULxPOW(x,48,0xa9), MULxPOW(x,239,0xa9)}
+DIValpha(x) = {MULxPOW(x,16,0xa9), MULxPOW(x,39,0xa9),
+               MULxPOW(x,6,0xa9),  MULxPOW(x,64,0xa9)}
+```
+
+这里的 `0xa9` 与 S1/S2 的约简常量不同。RTL 将上述固定映射化为组合 XOR 矩阵；`s[0]` 和 `s[11]` 的移位、`s[2]` 以及初始化时的 F 按 2.1 方程合成新 `s[15]`，同一更新沿将旧 `s[1..15]` 移到 `s[0..14]`。
+
 ## 2.2 Microarchitecture Analysis
 
 ### 2.2.1 Top Level Diagram
 
-[[DIAGRAM:snow]]
+![SNOW 3G 原语顶层数据及反馈关系](../figures/snow.png)
 
 LFSR 和算法 FSM 组合计算下一状态。控制器区分 INIT、DISCARD 和 WORK，并决定状态更新使能；`word_out` 是当前状态的组合函数，未单独寄存。图中反馈仅表示逻辑依赖，非额外流水级。
 
 ### 2.2.2 Timing Requirement
 
 本表假设 E0 的 `start=1`，之后无重新启动或复位。输出的首字在 E33 更新后组合有效，最早在下一上升沿被同步接收；这是与初始化状态更新沿的区分。
+
+![SNOW 3G 初始化、首字与暂停时序](../figures/stream_timing.png)
+
+图中 E34 消费 Z0；E35/E36 的 `advance=0`，沿后仍保持 Z1；E37 再消费 Z1，沿后变为 Z2。时钟沿前的 `word_out` 才是该沿消费的字。
 
 | 时刻 | RTL 行为 | `valid` / 消费 |
 | --- | --- | --- |

@@ -64,10 +64,10 @@ RTL := $(AES_RTL) rtl/mdm_snow3g.v rtl/mdm_zuc.v rtl/mdm_packet_buffer.v \
        rtl/mdm_cipher.v rtl/mdm_integrity.v rtl/mdm_sec.v
 HEADERS := rtl/mdm_sboxes.vh rtl/mdm_aes_sbox.vh rtl/mdm_aes_mix_balanced.vh
 
-.PHONY: all test example lint test-style test-specs test-aes test-aes-balanced-blocks test-aes-hierarchy test-fast test-balanced test-balanced-fallback test-aes-formal area-aes-balanced area-aes-timing test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
+.PHONY: all test example lint test-style test-specs test-spec-timing test-aes test-aes-balanced-blocks test-aes-hierarchy test-fast test-balanced test-balanced-fallback test-aes-formal area-aes-balanced area-aes-timing test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
 all: test
 
-test: lint test-style test-specs example test-aes test-aes-balanced-blocks test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-balanced test-balanced-fallback test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network
+test: lint test-style test-specs test-spec-timing example test-aes test-aes-balanced-blocks test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-balanced test-balanced-fallback test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network
 
 # Synthetic VCDs exercise hierarchy, variant and activity checks, including
 # rejection of the previous depth-4 packet trace.
@@ -84,9 +84,18 @@ test-u-network:
 test-style:
 	$(PYTHON) tests/check_rtl_style.py
 
-# DOCX integrity, source/RTL interface consistency; uses Python stdlib only.
+# DOCX, figures, S-box tables and source/RTL interfaces; Python stdlib only.
 test-specs:
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/test_rtl_specs.py
+
+# The documented NULL-algorithm packet timing example, including backpressure.
+$(BUILD_DIR)/tb_spec_timing/Vtb_spec_timing: $(RTL) $(HEADERS) tests/rtl/tb_spec_timing.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_spec_timing --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_spec_timing.sv
+
+test-spec-timing: $(BUILD_DIR)/tb_spec_timing/Vtb_spec_timing
+	$<
 
 # Small self-checking integration example; the testbench is simulation-only.
 $(BUILD_DIR)/tb_quickstart/Vtb_mdm_sec_quickstart: $(RTL) $(HEADERS) examples/tb_mdm_sec_quickstart.sv

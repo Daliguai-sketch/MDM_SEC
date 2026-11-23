@@ -21,6 +21,8 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
 from PIL import Image, ImageDraw, ImageFont
 
+from spec_diagrams import EXTRA_DIAGRAMS
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = ROOT / "docs/specs/src"
 RTL_BASELINE = "938ac3409dbcf2c2bc4244f4b3d60f1b19da0c4c"
@@ -387,32 +389,35 @@ def diagram_mdm():
     return image
 
 
+DIAGRAMS = {"aes": diagram_aes, "aes_balanced": diagram_aes_balanced,
+            "snow": diagram_snow, "zuc": diagram_zuc, "mdm": diagram_mdm,
+            **EXTRA_DIAGRAMS}
+# Ordinary Markdown images make the source readable on GitHub as well as in
+# Word. Only generator-owned figures can be embedded; no external fetches.
+FIGURE_PATTERN = re.compile(r"!\[([^\]\n]+)\]\(\.\./figures/([a-z][a-z0-9_]*)\.png\)")
+
+
 def diagram_bytes(name):
-    image = {"aes": diagram_aes, "aes_balanced": diagram_aes_balanced,
-             "snow": diagram_snow, "zuc": diagram_zuc, "mdm": diagram_mdm}[name]()
+    if name not in DIAGRAMS:
+        raise ValueError("Unknown generated diagram: " + name)
     output = BytesIO()
-    image.save(output, format="PNG", optimize=True)
-    output.seek(0)
-    return output
+    DIAGRAMS[name]().save(output, format="PNG", optimize=True)
+    return output.getvalue()
 
 
-def add_figure(doc, kind):
-    captions = {
-        "aes": "图 1  AES-128 包装器及静态选择的配置",
-        "aes_balanced": "图 1  5 拍 balanced AES-128 逻辑数据路径与轮密钥扩展",
-        "snow": "图 1  SNOW 3G 原语顶层数据及反馈关系",
-        "zuc": "图 1  ZUC-128 原语顶层数据及反馈关系",
-        "mdm": "图 1  MDM_SEC 包级顶层结构与两条独立通道",
-    }
+def add_figure(doc, kind, label, number, figure_dir):
+    caption_text = f"图 {number}  {label}"
     paragraph = doc.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph.paragraph_format.keep_with_next = True
-    shape = paragraph.add_run().add_picture(diagram_bytes(kind), width=Inches(CONTENT_WIDTH))
-    shape._inline.docPr.set("descr", captions[kind])
+    shape = paragraph.add_run().add_picture(str(figure_dir / (kind + ".png")),
+                                            width=Inches(CONTENT_WIDTH))
+    shape._inline.docPr.set("title", kind)
+    shape._inline.docPr.set("descr", caption_text)
     caption = doc.add_paragraph()
     caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
     caption.paragraph_format.space_after = Pt(8)
-    set_font(caption.add_run(captions[kind]), size=9, color=TEAL)
+    set_font(caption.add_run(caption_text), size=9, color=TEAL)
 
 
 def add_page_number(paragraph):
@@ -526,7 +531,7 @@ def prepare_document(name, subtitle, source_hash, outline, rtl_baseline=RTL_BASE
     set_font(sub.add_run(subtitle), size=12, color=TEAL)
     add_table(doc, [
         ["Document Control", "Value"],
-        ["版本 / 状态", "V0.1 / Draft — 待评审，非工艺与安全签核"],
+        ["版本 / 状态", "V0.2 / Draft — 待评审，非工艺与安全签核"],
         ["编制日期", DATE],
         ["RTL 基线提交", rtl_baseline],
         ["编制 / 审核 / 批准", "TBD / TBD / TBD"],
@@ -539,13 +544,12 @@ def prepare_document(name, subtitle, source_hash, outline, rtl_baseline=RTL_BASE
 
     doc.add_heading("Document Control and Revision History", level=1)
     add_table(doc, [["版本", "日期", "变更 / 状态"],
-                    ["0.1", DATE, "依据 RTL 基线形成初版；待设计、验证、综合及安全评审。"]])
+                    ["0.1", DATE, "依据 RTL 基线形成初版；待设计、验证、综合及安全评审。"],
+                    ["0.2", DATE, "补充算法步骤、S 盒、设计框图、交互及时序图；RTL 功能未变，仍待评审。"]])
     doc.add_heading("Contents", level=1)
     guide = doc.add_paragraph("选择目录条目可跳转到对应章节。本目录由源文件生成，不含自动页码；修改章节标题后需重新生成。")
     guide.paragraph_format.space_after = Pt(6)
     for level, heading, bookmark in outline:
-        if level > 3:
-            continue
         paragraph = doc.add_paragraph()
         paragraph.paragraph_format.left_indent = Cm((level - 1) * 0.48)
         paragraph.paragraph_format.space_before = Pt(0)
@@ -560,19 +564,22 @@ def prepare_document(name, subtitle, source_hash, outline, rtl_baseline=RTL_BASE
 
 
 def add_code(doc, lines):
-    for line in lines:
+    for index, line in enumerate(lines):
         paragraph = doc.add_paragraph()
         paragraph.paragraph_format.left_indent = Cm(0.25)
         paragraph.paragraph_format.space_after = Pt(0)
         paragraph.paragraph_format.line_spacing = 1.05
+        # Keep short equation blocks and S-box tables together on a page.
+        paragraph.paragraph_format.keep_with_next = (len(lines) <= 20 and index < len(lines)-1)
         set_font(paragraph.add_run(line if line else " "), MONO_FONT, 8.7, color=NAVY)
     doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
 
-def render_markdown(doc, source):
+def render_markdown(doc, source, figure_dir):
     lines = source.splitlines()
     outline = iter(heading_outline(source))
     heading_number = 0
+    figure_number = 0
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -590,11 +597,14 @@ def render_markdown(doc, source):
             add_code(doc, block)
             i += 1
             continue
-        marker = re.fullmatch(r"\[\[DIAGRAM:(aes|aes_balanced|snow|zuc|mdm)\]\]", line.strip())
+        marker = FIGURE_PATTERN.fullmatch(line.strip())
         if marker:
-            add_figure(doc, marker.group(1))
+            figure_number += 1
+            add_figure(doc, marker.group(2), marker.group(1), figure_number, figure_dir)
             i += 1
             continue
+        if line.strip().startswith("![") or "[[DIAGRAM:" in line:
+            raise ValueError("Unsupported figure reference: " + line)
         if line.startswith("|"):
             rows = []
             while i < len(lines) and lines[i].startswith("|"):
@@ -651,11 +661,36 @@ def main():
     args = parser.parse_args()
     output = Path(args.output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
-    for stem, (name, subtitle, kind) in DOCUMENTS.items():
-        if args.only and stem not in args.only:
-            continue
-        source_path = SOURCE_DIR / (stem + ".md")
-        data = source_path.read_bytes()
+    selected = {stem: spec for stem, spec in DOCUMENTS.items()
+                if not args.only or stem in args.only}
+    sources = {stem: (SOURCE_DIR / (stem + ".md")).read_bytes() for stem in selected}
+    figure_names = set()
+    for data in sources.values():
+        figure_names.update(match.group(2) for match in
+                            FIGURE_PATTERN.finditer(data.decode("utf-8")))
+    figure_dir = output / "figures"
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    rendered = {kind: diagram_bytes(kind) for kind in sorted(figure_names)}
+    if args.only:
+        # Shared figures are committed as Markdown assets and also embedded in
+        # each Word file. Never silently leave an unselected DOCX with a stale
+        # image when the renderer or font environment changes.
+        unselected_uses = {}
+        for stem in set(DOCUMENTS) - set(selected):
+            if not (output / (stem + ".docx")).exists():
+                continue
+            other = (SOURCE_DIR / (stem + ".md")).read_text(encoding="utf-8")
+            for match in FIGURE_PATTERN.finditer(other):
+                unselected_uses.setdefault(match.group(2), set()).add(stem)
+        for kind, data in rendered.items():
+            existing = figure_dir / (kind + ".png")
+            if kind in unselected_uses and (not existing.exists() or existing.read_bytes() != data):
+                raise SystemExit("Shared figure missing or changed: " + kind + "; regenerate all documents "
+                                 "that use it, or run without --only")
+    for kind, data in rendered.items():
+        (figure_dir / (kind + ".png")).write_bytes(data)
+    for stem, (name, subtitle, _kind) in selected.items():
+        data = sources[stem]
         source = data.decode("utf-8")
         # The optimized core is new; its exact RTL is the one committed with
         # this specification, not the older baseline used by the other specs.
@@ -665,7 +700,7 @@ def main():
             baseline = RTL_BASELINE
         doc = prepare_document(name, subtitle, hashlib.sha256(data).hexdigest(),
                                heading_outline(source), baseline)
-        render_markdown(doc, source)
+        render_markdown(doc, source, figure_dir)
         path = output / (stem + ".docx")
         save_reproducible(doc, path)
         print(f"Generated {path} ({path.stat().st_size:,} bytes)")
