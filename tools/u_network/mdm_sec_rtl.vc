@@ -1,6 +1,7 @@
 +incdir+../vc
 ../vc/mdm_aes_sbox.v
 ../vc/mdm_aes_blocks.v
+../vc/mdm_aes_balanced_blocks.v
 ../vc/mdm_aes128_serial.v
 ../vc/mdm_aes128_fast.v
 ../vc/mdm_aes128_balanced.v

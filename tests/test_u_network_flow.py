@@ -348,8 +348,10 @@ class UNetworkFlowTests(unittest.TestCase):
     def test_balanced_variant_is_packaged_and_selected(self):
         result = self.run_script(updates={"AES_LOW_AREA": "2", "RUN_FULL": "0", "AES_BLOCKS": "8"})
         run = self.run_dir(result)
-        for name in ("mdm_aes128_balanced.v", "mdm_aes_mix_balanced.vh"):
-            self.assertTrue((self.design / "vc" / name).is_file())
+        for name in ("mdm_aes128_balanced.v", "mdm_aes_balanced_blocks.v", "mdm_aes_mix_balanced.vh"):
+            packaged = self.design / "vc" / name
+            self.assertTrue(packaged.is_file())
+            self.assertEqual(packaged.read_bytes(), (ROOT / "rtl" / name).read_bytes())
         self.assertIn("-pvalue+tb_mdm_sec.TEST_AES_LOW_AREA=2",
                       (run / "tb/compile_args.txt").read_text().splitlines())
         self.assertIn("-pvalue+tb_aes_random.TEST_AES_LOW_AREA=2",
@@ -443,7 +445,8 @@ class UNetworkFlowTests(unittest.TestCase):
     def test_missing_or_empty_inputs_fail_before_vcs(self):
         for path in (self.tb / "vectors/packet_vectors.txt", self.tb / "vectors/wave_vectors.txt",
                      self.tb / "tb_aes_random.sv", self.design / "vc/mdm_sec.v",
-                     self.design / "vc/mdm_aes_sbox.vh", self.design / "vc/mdm_aes_mix_balanced.vh"):
+                     self.design / "vc/mdm_aes_balanced_blocks.v", self.design / "vc/mdm_aes_sbox.vh",
+                     self.design / "vc/mdm_aes_mix_balanced.vh"):
             with self.subTest(path=path):
                 original = path.read_bytes()
                 path.unlink()

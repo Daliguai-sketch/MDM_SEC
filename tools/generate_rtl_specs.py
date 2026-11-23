@@ -323,9 +323,9 @@ def diagram_aes_balanced():
     arrow(draw, [(1250, 335), (1250, 400)])
     draw_box(draw, (35, 365, 285, 625), "Request", ["key / block_in", "start / ready", "128b"], "#E4F1F4")
     draw_box(draw, (350, 365, 620, 625), "Registers", ["round_state", "key_reg / rcon", "pair 0 to 4"], "#FFF1D8")
-    draw_box(draw, (720, 175, 1400, 335), "Two-round key expansion", ["key1 then factored key2", "8 S-boxes, online per block"], "#E7F3EC")
-    draw_box(draw, (720, 400, 1010, 590), "Round 1", ["16 S-boxes", "MixColumns", "AddRoundKey"], "#E8EEF9")
-    draw_box(draw, (1100, 400, 1400, 590), "Round 2", ["16 S-boxes", "MixColumns bypass", "when pair = 4"], "#E8EEF9")
+    draw_box(draw, (720, 175, 1400, 335), "u_key_expand1 / 2", ["key1 then factored key2", "8 S-boxes, online per block"], "#E7F3EC")
+    draw_box(draw, (720, 400, 1010, 590), "u_round1", ["16 S-boxes", "MixColumns", "AddRoundKey"], "#E8EEF9")
+    draw_box(draw, (1100, 400, 1400, 590), "u_round2", ["16 S-boxes", "MixColumns bypass", "when pair = 4"], "#E8EEF9")
     draw_box(draw, (1485, 365, 1760, 625), "Result", ["done on E5", "block_out: 128b", "next request on E5"], "#E4F1F4")
     draw.text((700, 775), "feedback after rounds 2, 4, 6 and 8", fill="#527287", font=image_font(23))
     return image

@@ -2,7 +2,7 @@
 
 ## 1.1 Purpose
 
-本文规定 MDM_SEC 新增的 **5 拍面积优化 AES-128 块加密核**的 RTL 架构、接口、时序、验证和集成要求。独立 Verilog 模块为 `mdm_aes128_balanced`，源码是 `rtl/mdm_aes128_balanced.v`；工程包装器 `mdm_aes128` 在 `AES_LOW_AREA=2` 时静态选择该核。
+本文规定 MDM_SEC 的 **5 拍面积优化 AES-128 块加密核**的 RTL 架构、接口、时序、验证和集成要求。独立 Verilog 模块为 `mdm_aes128_balanced`，控制及寄存器位于 `rtl/mdm_aes128_balanced.v`，组合子模块位于 `rtl/mdm_aes_balanced_blocks.v`；工程包装器 `mdm_aes128` 在 `AES_LOW_AREA=2` 时静态选择该核。
 
 本文与同一 Git 提交中的 RTL 配套。5 拍是周期协议，不是目标工艺频率或面积签核；目标标准单元、约束、PVT 和布局布线结果未提供，物理 PPA 与安全认证均为 TBD。
 
@@ -36,6 +36,7 @@
 | 块时序 | E0 接受，E1～E5 每拍处理连续两轮，E5 输出；延迟和最小 II 均为 5 周期。 |
 | 连续请求 | 旧块最后计算沿可同时接收下一块；每块可更换 key，`busy` 与 `ready` 可同时为 1。 |
 | 面积优化 | MixColumns 使用 32-bit 线性 XOR 公共子表达式网络；两轮密钥扩展的第二轮 XOR 链代数化简。 |
+| 层次分析 | 两轮和密钥扩展拆成子模块；需在综合报告中确认层次未被 flatten/ungroup。 |
 | 并行资源 | 每拍组合展开 32 个数据 S-box、8 个密钥扩展 S-box；不把两个 MDM_SEC 通道合并。 |
 | 时钟和复位 | 统一上升沿时钟、异步低有效复位；复位释放同步由外部负责。 |
 | 输出 | `done` 一拍脉冲；`block_out` 保存至下一次完成或复位，无输出反压。 |
@@ -46,10 +47,10 @@
 | --- | --- |
 | R1 | NIST FIPS 197, Advanced Encryption Standard, updated 2023；https://doi.org/10.6028/NIST.FIPS.197-upd1 |
 | R2 | NIST SP 800-38A / SP 800-38B：CTR 和 CMAC，均由外围通道实现。 |
-| R3 | `rtl/mdm_aes128_balanced.v`, `rtl/mdm_aes_mix_balanced.vh`, `rtl/mdm_aes128_fast.v`, `rtl/mdm_aes128.v`。 |
-| R4 | `rtl/mdm_aes_sbox.vh`：AES S-box，BearSSL MIT 许可及版权原文保留在源码。 |
+| R3 | `rtl/mdm_aes128_balanced.v`, `rtl/mdm_aes_balanced_blocks.v`, `rtl/mdm_aes_mix_balanced.vh`, `rtl/mdm_aes128_fast.v`, `rtl/mdm_aes128.v`。 |
+| R4 | `rtl/mdm_aes_sbox.v` / `rtl/mdm_aes_sbox.vh`：AES S-box，BearSSL MIT 许可及版权原文保留在源码。 |
 | R5 | Joe Bachir 的 AES MixColumns 88-XOR depth-5 电路，MIT；该电路源自 Jeremy Jean 的 88-XOR 工作（ePrint 2026/1481，Jean 首创）。来源及修改说明见 `rtl/mdm_aes_mix_balanced.vh`。 |
-| R6 | `tests/rtl/tb_aes_random.sv`, `tests/formal/aes_mix_miter.v`, `docs/verification.md`。 |
+| R6 | `tests/rtl/tb_aes_random.sv`, `tests/rtl/tb_aes_balanced_blocks.sv`, `tests/formal/aes_mix_miter.v`, `docs/aes_balanced_hierarchy.md`, `docs/verification.md`。 |
 
 # 2 Microarchitecture
 
@@ -104,13 +105,16 @@ AES 将 16 字节按列映射为 4×4 字节状态。输入块先与初始 key �
 
 ### 2.2.4 Sub-modules
 
-| 逻辑 | 实现和职责 |
+| 实例 / 逻辑 | 实现和职责 |
 | --- | --- |
-| `aes_sbox` | 引入 `mdm_sboxes.vh` 中的 BearSSL Boyar–Peralta AES function；每个字节为纯组合逻辑。 |
-| `aes_mix_column_balanced` | 引入 `mdm_aes_mix_balanced.vh`；一列 32-bit、88 XOR 的共享线性网络，末轮旁路。 |
-| `round_fn` | SubBytes、固定 ShiftRows、可选 MixColumns 及 AddRoundKey。 |
-| `next_key` / `t2` | 第一轮按 AES 标准扩展，第二轮使用代数消去后的 XOR 方程。 |
+| `u_initial_add_round_key` | 输入块与初始密钥的 128-bit XOR。 |
+| `u_key_expand1/2` | 两个轮密钥扩展模块；各含 4 个 S-box，第二轮使用代数消去后的 XOR 方程。 |
+| `u_round1/2` | 两个组合轮模块，各含 `u_subbytes`、`u_shift_rows`、`u_mix_columns`、`u_add_round_key`。 |
+| `u_subbytes.g_byte[0..15].u_sbox` | 每轮 16 个分层的 BearSSL Boyar–Peralta S-box；各含 `u_top/u_nonlinear/u_bottom`。 |
+| `u_mix_columns.g_column[0..3].u_mix_column` | 每轮 4 个 32-bit、88 XOR 的共享线性网络；第二轮在第 10 轮旁路。 |
 | `state/next_state` | `IDLE` / `COMPUTE` 两状态；寄存器、次态和输出/数据路径分区。 |
+
+模块划分参考仓库 Python AES 的 `key_expansion`、`sub_bytes`、`shift_rows`、`mix_columns` 和 `add_round_key`；没有增加寄存器。层次报告需检查工具是否 flatten/ungroup；父级若包含子级，不能重复累加面积。
 
 ### 2.2.5 Pipeline Design
 
@@ -131,7 +135,7 @@ C2 = C  XOR A2       D2 = D XOR B2
 | --- | --- |
 | 状态寄存器 | `round_state` 128 bit、`key_reg` 128 bit、`block_out` 128 bit。 |
 | 控制寄存器 | `rcon` 8 bit、`pair` 3 bit、`state` 1 bit、`done` 1 bit；时序声明合计 397 bit。 |
-| S-box | 32 个数据路径 + 8 个轮密钥扩展的组合调用，物理映射由综合工具决定。 |
+| S-box | 32 个数据路径 + 8 个轮密钥扩展的组合实例，物理映射由综合工具决定。 |
 | MixColumns | 每组合轮 4 列，共 8 份 32-bit 线性网络；最后轮选择旁路。 |
 | 外部存储 | 无 RAM/SRAM；无密钥扩展预计算表。 |
 
@@ -171,6 +175,7 @@ C2 = C  XOR A2       D2 = D XOR B2
 | --- | --- |
 | 固定答案 | FIPS-197 key `000102030405060708090a0b0c0d0e0f`，input `00112233445566778899aabbccddeeff`，output `69c4e0d86a7b0430d8cdb78070b4c55a`。 |
 | AES 回归 | `make test-aes`：新核 515 块，覆盖每块变换 key、5 拍延迟/最早连续启动、忙时无效请求、输入变化及复位中止；向量独立交叉检查 PyCryptodome。 |
+| 模块与层次 | `make test-aes-balanced-blocks` 对比 518 个 Python 中间状态向量；`make test-aes-hierarchy` 检查综合后可报告的模块及顶层两路独立实例。 |
 | 数学等价 | `make test-aes-formal`：MixColumns 的全输入 SAT 对比通过；优化核与原高速核的 Yosys `equiv_simple` 比对点通过。异步复位采用 `async2sync`，假设异步信号对时钟同步、异步触发器输入为负保持时间；并非任意复位释放波形的无条件证明。 |
 | 双通道系统 | `make test-balanced`：原语、两条通道、2641 个 2048 字节容量包和 12 个最大容量边界包通过。 |
 | 四态冒烟 | 包内 RTL 和 testbench 经 Icarus WebAssembly 通过 20 个定向包和 8 个 AES 块；FSDB 宏仅做 HDL 编译，未执行 PLI。 |

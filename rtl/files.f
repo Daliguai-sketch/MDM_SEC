@@ -1,6 +1,7 @@
 +incdir+rtl
 rtl/mdm_aes_sbox.v
 rtl/mdm_aes_blocks.v
+rtl/mdm_aes_balanced_blocks.v
 rtl/mdm_aes128_serial.v
 rtl/mdm_aes128_fast.v
 rtl/mdm_aes128_balanced.v

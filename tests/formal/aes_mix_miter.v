@@ -1,10 +1,11 @@
-// Independent reference for all 2^32 inputs of the optimized linear map.
-// Yosys SAT proves mismatch=0; the two functions share no intermediate RTL.
+// Independent reference for all 2^32 inputs of the instantiated optimized
+// MixColumns module. Yosys SAT proves mismatch=0 for the module's real ports.
 module aes_mix_miter (
     input wire [31:0] column,
     output wire mismatch
 );
-    `include "mdm_aes_mix_balanced.vh"
+    wire [31:0] actual;
+    mdm_aes_balanced_mix_column u_dut (.data_in(column), .data_out(actual));
 
     function automatic [7:0] ref_xtime(input [7:0] b);
         ref_xtime = {b[6:0],1'b0} ^ (b[7] ? 8'h1b : 8'h00);
@@ -20,5 +21,5 @@ module aes_mix_miter (
         a ^ b ^ ref_xtime(c) ^ ref_xtime(d) ^ d,
         ref_xtime(a) ^ a ^ b ^ c ^ ref_xtime(d)
     };
-    assign mismatch = aes_mix_column_balanced(column) != reference;
+    assign mismatch = actual != reference;
 endmodule

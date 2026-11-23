@@ -54,16 +54,16 @@ VCS_AES_BUILD = $(BUILD_DIR)/vcs_aes_$(WAVE_AES_LOW_AREA)
 # Verilator installations use their own settings; override VMAKEFLAGS if needed.
 VMAKEFLAGS ?= $(if $(findstring verilator-cli,$(notdir $(VERILATOR))),CFG_CXXFLAGS_PCH_I=-include,)
 
-AES_RTL := rtl/mdm_aes_sbox.v rtl/mdm_aes_blocks.v rtl/mdm_aes128_serial.v \
-           rtl/mdm_aes128_fast.v rtl/mdm_aes128_balanced.v rtl/mdm_aes128.v
+AES_RTL := rtl/mdm_aes_sbox.v rtl/mdm_aes_blocks.v rtl/mdm_aes_balanced_blocks.v \
+           rtl/mdm_aes128_serial.v rtl/mdm_aes128_fast.v rtl/mdm_aes128_balanced.v rtl/mdm_aes128.v
 RTL := $(AES_RTL) rtl/mdm_snow3g.v rtl/mdm_zuc.v rtl/mdm_packet_buffer.v \
        rtl/mdm_cipher.v rtl/mdm_integrity.v rtl/mdm_sec.v
 HEADERS := rtl/mdm_sboxes.vh rtl/mdm_aes_sbox.vh rtl/mdm_aes_mix_balanced.vh
 
-.PHONY: all test example lint test-style test-specs test-aes test-fast test-balanced test-aes-formal area-aes-balanced test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
+.PHONY: all test example lint test-style test-specs test-aes test-aes-balanced-blocks test-aes-hierarchy test-fast test-balanced test-aes-formal area-aes-balanced test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
 all: test
 
-test: lint test-style test-specs example test-aes test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-balanced test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network
+test: lint test-style test-specs example test-aes test-aes-balanced-blocks test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-balanced test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network
 
 # Synthetic VCDs exercise hierarchy, variant and activity checks, including
 # rejection of the previous depth-4 packet trace.
@@ -102,6 +102,18 @@ lint:
 $(BUILD_DIR)/aes_vectors.txt: tests/gen_aes_vectors.py tests/reference_model.py sec_core/aes/sec_aes_core_enc.py
 	@mkdir -p $(@D)
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/gen_aes_vectors.py $@
+
+$(BUILD_DIR)/aes_balanced_stage_vectors.txt: tests/gen_aes_balanced_stage_vectors.py sec_core/aes/sec_aes_core_enc.py
+	@mkdir -p $(@D)
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/gen_aes_balanced_stage_vectors.py $@
+
+$(BUILD_DIR)/tb_aes_balanced_blocks/Vtb_aes_balanced_blocks: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_balanced_blocks.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_aes_balanced_blocks --Mdir $(abspath $(@D)) $(AES_RTL) tests/rtl/tb_aes_balanced_blocks.sv
+
+test-aes-balanced-blocks: $(BUILD_DIR)/aes_balanced_stage_vectors.txt $(BUILD_DIR)/tb_aes_balanced_blocks/Vtb_aes_balanced_blocks
+	$(BUILD_DIR)/tb_aes_balanced_blocks/Vtb_aes_balanced_blocks +VECTORS=$(abspath $(BUILD_DIR)/aes_balanced_stage_vectors.txt)
 
 $(BUILD_DIR)/tb_aes_small/Vtb_aes_random: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv
 	@mkdir -p $(@D)
@@ -396,15 +408,24 @@ test-balanced: $(BUILD_DIR)/packet_vectors.txt $(BUILD_DIR)/boundary_vectors.txt
 test-aes-formal:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	@mkdir -p $(BUILD_DIR)
-	$(YOSYS) -Q -T -p 'read_verilog -Irtl tests/formal/aes_mix_miter.v; prep -top aes_mix_miter; sat -verify -prove mismatch 0' > $(BUILD_DIR)/aes-mix-formal.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl rtl/mdm_aes_balanced_blocks.v tests/formal/aes_mix_miter.v; prep -top aes_mix_miter -flatten; sat -verify -prove mismatch 0' > $(BUILD_DIR)/aes-mix-formal.log
 	@grep -q 'SAT proof finished - no model found: SUCCESS' $(BUILD_DIR)/aes-mix-formal.log
-	$(YOSYS) -Q -T -p 'read_verilog -Irtl rtl/mdm_aes128_fast.v rtl/mdm_aes128_balanced.v; proc; opt_clean; equiv_make mdm_aes128_fast mdm_aes128_balanced equiv; hierarchy -top equiv; async2sync; equiv_simple; equiv_status -assert' > $(BUILD_DIR)/aes-balanced-equiv.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl rtl/mdm_aes_sbox.v rtl/mdm_aes_blocks.v rtl/mdm_aes_balanced_blocks.v rtl/mdm_aes128_fast.v rtl/mdm_aes128_balanced.v; hierarchy -check; proc; flatten mdm_aes128_fast mdm_aes128_balanced; opt_clean; equiv_make mdm_aes128_fast mdm_aes128_balanced equiv; hierarchy -check -top equiv; async2sync; equiv_simple; equiv_status -assert' > $(BUILD_DIR)/aes-balanced-equiv.log
 	@grep -q 'Equivalence successfully proven' $(BUILD_DIR)/aes-balanced-equiv.log
 	@echo 'PASS MixColumns SAT and fast/balanced AES equivalence (async2sync reset model)'
 
 area-aes-balanced:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	$(PYTHON) tests/compare_aes_balanced_area.py --yosys "$(YOSYS)" --output "$(BUILD_DIR)/aes-balanced-area"
+
+# Check that an unflattened generic synthesis keeps the area-reportable stages,
+# and that both mdm_sec lanes select independent balanced AES cores.
+test-aes-hierarchy:
+	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
+	@mkdir -p $(BUILD_DIR)
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(AES_RTL); hierarchy -check -top mdm_aes128_balanced; synth -top mdm_aes128_balanced -noabc; check -assert; stat; write_json $(BUILD_DIR)/aes-balanced-synth.json' > $(BUILD_DIR)/aes-balanced-synth-hierarchy.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES 16 -chparam AES_LOW_AREA 2; proc; opt_clean; check -assert; write_json $(BUILD_DIR)/aes-balanced-top.json' > $(BUILD_DIR)/aes-balanced-top-hierarchy.log
+	$(PYTHON) tests/check_aes_balanced_hierarchy.py --synth $(BUILD_DIR)/aes-balanced-synth.json --top $(BUILD_DIR)/aes-balanced-top.json
 
 yosys-check:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }

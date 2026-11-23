@@ -50,7 +50,7 @@ CTR 模式加解密和 CMAC 完整性属于外围 `mdm_cipher` / `mdm_integrity`
 | R2 | NIST SP 800-38A, Recommendation for Block Cipher Modes of Operation: Methods and Techniques，CTR 模式背景。 |
 | R3 | NIST SP 800-38B, Recommendation for Block Cipher Modes of Operation: the CMAC Mode for Authentication，CMAC 背景。 |
 | R4 | `rtl/mdm_aes128.v`, `rtl/mdm_aes128_serial.v`, `rtl/mdm_aes128_fast.v`, `rtl/mdm_aes128_balanced.v`，本规范 RTL 基线。 |
-| R5 | `rtl/mdm_aes_blocks.v`, `rtl/mdm_aes_sbox.v`, `rtl/mdm_aes_sbox.vh`，数据路径及 S-box 实现；S-box 许可见源码。 |
+| R5 | `rtl/mdm_aes_blocks.v`, `rtl/mdm_aes_balanced_blocks.v`, `rtl/mdm_aes_sbox.v`, `rtl/mdm_aes_sbox.vh`，数据路径及 S-box 实现；S-box 许可见源码。 |
 | R6 | `tests/rtl/tb_aes_random.sv`, `tests/rtl/tb_primitives.sv`, `docs/verification.md`, `docs/area_optimization.md`。 |
 
 # 2 Microarchitecture
@@ -116,7 +116,8 @@ AES 将 16 字节按列组织为 4×4 字节状态矩阵。输入块首先与初
 | `u_mix_column` / `mdm_aes_mix_column` | 对一个 32-bit 列进行 MixColumns；最后一轮旁路。 |
 | `u_add_round_key` | 一个 32-bit 列与对应轮密钥列异或。 |
 | `u_sbox.u_top/u_nonlinear/u_bottom` | S-box 分层的线性/非线性布尔电路；版权与许可保留在源文件。 |
-| 高速 / 优化版 `next_key`、`round_fn` | Verilog function 形成两级组合轮和密钥扩展；优化版的 `aes_mix_column_balanced` 为 88 XOR 线性网络。 |
+| 原高速版 `next_key`、`round_fn` | Verilog function 形成两级组合轮和密钥扩展。 |
+| 优化版 `u_key_expand1/2`、`u_round1/2` | 可例化模块分别实现密钥扩展和两轮数据路径；每轮含 SubBytes、ShiftRows、MixColumns、AddRoundKey 子模块。 |
 
 ### 2.2.5 Pipeline Design
 
@@ -131,7 +132,7 @@ AES 将 16 字节按列组织为 4×4 字节状态矩阵。输入块首先与初
 | 项目 | 低面积 | 原高速 / 5 拍优化 |
 | --- | --- | --- |
 | 核心状态和控制寄存器 | 按源码声明约 497 bit，含块输出和 `done` | 按源码声明约 397 bit，含块输出和 `done` |
-| S-box 结构 | 4 个组合 S-box，共享密钥与数据 | 组合 function 中展开多组 S-box；实际映射待综合。 |
+| S-box 结构 | 4 个组合 S-box，共享密钥与数据 | 原高速版为组合 function；优化版分层例化 32 个数据和 8 个密钥 S-box；实际映射待综合。 |
 | MixColumns | 1 个 32-bit 列单元，四列复用 | 每拍组合两轮，最后轮旁路；优化版使用 88 XOR 的列网络。 |
 | 外部 RAM / SRAM | 无 | 无 |
 | MDM_SEC 实例数量 | cipher、integrity 各 1 个 | cipher、integrity 各 1 个 |

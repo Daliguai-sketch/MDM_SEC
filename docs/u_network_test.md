@@ -36,6 +36,7 @@ mdm_sec_u/
     │   ├── mdm_sec_rtl.vc            # RTL 文件列表和 +incdir
     │   ├── mdm_sec.v                 # 所有 .v 均在 vc/
     │   ├── mdm_aes128*.v ...
+    │   ├── mdm_aes_balanced_blocks.v # 5 拍优化核的分层组合模块
     │   └── mdm_sboxes.vh ...         # 必需的 include 文件
     └── tb/
         ├── run.sh                    # 一条命令执行默认回归和 FSDB
@@ -61,6 +62,8 @@ tb_mdm_sec.sv
 与截图中的绝对路径形式等价，但这里采用 `vc/` 和 `tb/` 之间的相对路径，可把整个 `design/` 放到不同机器而不改写用户名路径。`mdm_sec_rtl.vc` 中列出 `../vc/*.v` 和 `+incdir+../vc`；`.vh` 随 RTL 一同复制。运行脚本会在独立输出目录建立同样的 `vc/tb` 相对布局，使用上述 `filelist.f` 编译。
 
 外网产生的向量不包含 Python 源码；不能在 U 网自动补生成。请将 RTL、testbench 和向量作为一个完整的包转入，不要混用不同版本。脚本只检查所需文件是否存在、可读且非空，不检查传输后内容是否改变。
+
+`AES_LOW_AREA=2` 的 balanced 核已拆分模块，转入时必须同时更新 `mdm_aes128_balanced.v`、`mdm_aes_balanced_blocks.v` 和文件列表；也需要包内的 `mdm_aes_blocks.v`、`mdm_aes_sbox.v`、`mdm_aes_mix_balanced.vh` 及 include 路径。若综合使用独立 filelist，也必须加入新 `.v`。综合顶层参数默认是 1；选择 2 后才会展开 balanced 核，仿真脚本的环境变量不会自动传给 `rc_flow`。该核下的 `u_key_expand1/2`、`u_round1/2` 各自可查看层次面积，轮内有 `u_subbytes`、`u_shift_rows`、`u_mix_columns`、`u_add_round_key`；综合自动 flatten 可能移除这些层次，需由现场流程按工具版本保留并报告。父级含子级时不要重复累加面积。
 
 ## 4. U 网解压并运行
 
