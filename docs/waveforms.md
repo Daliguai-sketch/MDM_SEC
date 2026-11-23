@@ -27,7 +27,7 @@ make wave WAVE_AES_LOW_AREA=2      # 产生两个 5 拍优化版 VCD
 | `build/rtl/waveforms/mdm_sec_fast.vcd` | `WAVE_AES_LOW_AREA=0` 时的包波形 |
 | `build/rtl/waveforms/aes128_fast.vcd` | `WAVE_AES_LOW_AREA=0` 时的独立高速 AES 核 |
 | `build/rtl/waveforms/mdm_sec_balanced.vcd` | `WAVE_AES_LOW_AREA=2` 时的包波形 |
-| `build/rtl/waveforms/aes128_balanced.vcd` | `WAVE_AES_LOW_AREA=2` 时的独立 5 拍优化核 |
+| `build/rtl/waveforms/aes128_balanced.vcd` | `WAVE_AES_LOW_AREA=2` 时的独立原 balanced 核；包级完整性使用时序候选 |
 | `build/rtl/wave_vectors.cases.txt` | 每个包用例的编号、算法、长度、预期 MAC 和名称 |
 
 两个 VCD 目标会自动检查文件中的时钟/复位变化、主要握手、用例编号、模式 5 成功/失败响应及 AES 固定答案。包级检查还要求加密与完整性两路 `u_aes` 各自的 `u_core` 内部状态、计数器及数据寄存器存在并变化；独立 AES 波形同样检查 `u_core`。这是波形完整性冒烟检查，不能替代 testbench 的逐项比较。文件名中的 `low_area`、`fast` 和 `balanced` 对应 RTL 的 `AES_LOW_AREA=1`、`0` 和 `2`。每次运行会覆盖所选配置的同名 VCD；所有生成文件均在 `build/`，`make clean` 会删除，重要结果请先另存。
@@ -112,7 +112,7 @@ tb_mdm_sec.dut.u_cipher.u_aes.g_fast.u_core       # 加密通道
 tb_mdm_sec.dut.u_integrity.u_aes.g_fast.u_core    # 完整性通道
 ```
 
-先加入 `tb_mdm_sec.wave_case_id`，在用例 1 看加密通道、用例 4 看完整性通道，或在用例 6 看两路 AES；加入各 `u_core` 的 `start/ready/busy/done`、`state/pair/round_state/key_reg/rcon`，放大该用例。成功接收为 `start && ready`，高速核工作时 `pair` 经历 0～4；空闲或没有使用 AES 的用例中不应期待它持续变化。原 5 拍为 `g_fast`，新 5 拍优化版为 `g_balanced`（`AES_LOW_AREA=2`），默认 50 拍版为 `g_low_area`（`AES_LOW_AREA=1`）；generate 分支不会同时存在。
+先加入 `tb_mdm_sec.wave_case_id`，在用例 1 看加密通道、用例 4 看完整性通道，或在用例 6 看两路 AES；加入各 `u_core` 的 `start/ready/busy/done`、`state/pair/round_state/key_reg/rcon`，放大该用例。成功接收为 `start && ready`，高速核工作时 `pair` 经历 0～4；空闲或没有使用 AES 的用例中不应期待它持续变化。原 5 拍为 `g_fast`；`AES_LOW_AREA=2` 时 cipher 为 `g_balanced`，integrity 默认是 `g_balanced_timing`（设回退参数后为 `g_balanced`）；默认 50 拍版为 `g_low_area`（`AES_LOW_AREA=1`）。每个 AES 实例只有一个选中的 generate 分支。
 
 独立 AES bench 的根节点为 `tb_aes_random`，层级是 `tb_aes_random.dut.g_fast.u_core` 等，不带包级的 `u_cipher` 或 `u_integrity`。加入 `clk/rst_n/start/ready/busy/done`、`key/block_in/block_out` 和 `scoreboard_active`。开头有四次中途复位测试；`scoreboard_active=1` 后才是逐块自检。首块是 FIPS-197 固定答案：密钥 `000102030405060708090a0b0c0d0e0f`，输入 `00112233445566778899aabbccddeeff`，输出 `69c4e0d86a7b0430d8cdb78070b4c55a`。
 

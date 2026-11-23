@@ -63,7 +63,19 @@ tb_mdm_sec.sv
 
 外网产生的向量不包含 Python 源码；不能在 U 网自动补生成。请将 RTL、testbench 和向量作为一个完整的包转入，不要混用不同版本。脚本只检查所需文件是否存在、可读且非空，不检查传输后内容是否改变。
 
-`AES_LOW_AREA=2` 的 balanced 核已拆分模块，转入时必须同时更新 `mdm_aes128_balanced.v`、`mdm_aes_balanced_blocks.v` 和文件列表；也需要包内的 `mdm_aes_blocks.v`、`mdm_aes_sbox.v`、`mdm_aes_mix_balanced.vh` 及 include 路径。若综合使用独立 filelist，也必须加入新 `.v`。综合顶层参数默认是 1；选择 2 后才会展开 balanced 核，仿真脚本的环境变量不会自动传给 `rc_flow`。该核下的 `u_key_expand1/2`、`u_round1/2` 各自可查看层次面积，轮内有 `u_subbytes`、`u_shift_rows`、`u_mix_columns`、`u_add_round_key`；综合自动 flatten 可能移除这些层次，需由现场流程按工具版本保留并报告。父级含子级时不要重复累加面积。
+`AES_LOW_AREA=2` 的 balanced 核已拆分模块，转入时必须同时更新 `mdm_aes128_balanced.v`、新增的 `mdm_aes128_balanced_timing.v`、`mdm_aes_balanced_blocks.v` 和文件列表；也需要包内的 `mdm_aes_blocks.v`、`mdm_aes_sbox.v`、`mdm_aes_mix_balanced.vh` 及 include 路径。若综合使用独立 filelist，也必须加入新 `.v`。综合顶层参数默认是 1；选择 2 后，cipher 选原 balanced，integrity 默认选时序候选；顶层 `AES_INTEGRITY_TIMING_OPT=0` 可回退。仿真脚本的环境变量不会自动传给 `rc_flow`。该核下的 `u_key_expand1/2`、`u_round1/2` 可查看层次面积；综合自动 flatten 可能移除层次，需由现场流程按工具版本保留并报告，父级含子级时不要重复累加面积。新完整性实例路径为 `g_balanced_timing.u_core`，必须重新核对现场 SDC 和实例匹配。
+
+### 3.1 综合参数及 375 MHz 对比
+
+比较两次 RTL elaboration：均将 `mdm_sec.AES_LOW_AREA` 设为 2，`AES_INTEGRITY_TIMING_OPT` 分别设为 0（原版）和 1（时序候选），其他工艺、约束、PVT、保层和综合选项保持一致。若现场流程不提供参数覆盖入口，可在**独立的综合源码副本**修改 `mdm_sec.v` 的默认值，再确认没有其他参数覆盖：
+
+```verilog
+parameter integer MAX_BYTES = 2048,
+parameter integer AES_LOW_AREA = 2,
+parameter integer AES_INTEGRITY_TIMING_OPT = 1  // 对比原版时改为 0
+```
+
+然后按现场既有命令 `rc_flow -top mdm_sec -syn rtl3` 重新展开、综合和报告。此处不了解现场 `rc_flow` 包装器，不假定它支持额外传参；`env AES_LOW_AREA=2 ... ./run.sh` 只配置仿真。检查 elaboration 实例、SDC、`dont_touch` 和路径组是否匹配新层次；不要将每拍更新的 `round_state` 反馈设为 5 拍 multicycle 或 false path。分别检查两个通道的 setup/hold、全设计 WNS/TNS、关键路径和面积，再进行所需工艺角及布局布线后 STA。当前候选仅在未映射通用逻辑上观察到拓扑级数下降，**没有目标工艺延时或 375 MHz 收敛保证**。
 
 ## 4. U 网解压并运行
 
@@ -128,7 +140,7 @@ tb/runs/mdm_sec_XXXXXXXX/
 
 每次运行新建目录并重新编译，不删除或复用旧 `simv`、日志或波形。`RUN_ROOT=/其他可写目录` 可指定输出目录；该目录必须在批处理计算节点可见。注意输出目录必须允许创建符号链接，FSDB 可能较大。
 
-成功条件：脚本退出码为 0，`regression.log` 含 `PASS 2641 packet vectors` 和并行覆盖 PASS，`tb/sim.log` 含正确的配置、`PASS directed waveform cases` 和 `PASS 20 packet vectors`，`aes/sim.log` 含 `PASS 8 AES blocks`，两份 FSDB 均非空。禁用某项时只检查其余启用的项目。脚本检查这些条件，但**不会解析 FSDB 内部事件**；请用本机 Verdi 打开脚本打印的 `simv.daidir` 与 `waves.fsdb`：
+成功条件：脚本退出码为 0，`regression.log` 含 `PASS 2641 packet vectors` 和并行覆盖 PASS，`tb/sim.log` 含正确的 `AES_LOW_AREA` 和 `AES_INTEGRITY_TIMING_OPT` 配置、`PASS directed waveform cases` 和 `PASS 20 packet vectors`，`aes/sim.log` 含正确的 `AES_LOW_AREA`、`BALANCED_TIMING_OPT` 及 `PASS 8 AES blocks`，两份 FSDB 均非空。禁用某项时只检查其余启用的项目。脚本检查这些条件，但**不会解析 FSDB 内部事件**；请用本机 Verdi 打开脚本打印的 `simv.daidir` 与 `waves.fsdb`：
 
 ```sh
 verdi -simflow -dbdir /脚本打印的路径/tb/simv.daidir \
@@ -145,14 +157,15 @@ verdi -simflow -dbdir /脚本打印的路径/tb/simv.daidir \
 env RUN_FULL=0 ./run.sh                          # 跳过 2641 包，仍跑 20 个定向包 + 8 AES
 env RUN_AES=0 ./run.sh                           # 只跑包级 testbench，不编译 AES testbench
 env AES_LOW_AREA=0 ./run.sh                      # 选择原 5 拍高速 AES；默认是 50 拍低面积
-env AES_LOW_AREA=2 ./run.sh                      # 选择新的 5 拍面积优化 AES
+env AES_LOW_AREA=2 ./run.sh                      # cipher 原 balanced；integrity 5 拍时序候选
+env AES_LOW_AREA=2 AES_INTEGRITY_TIMING_OPT=0 ./run.sh  # integrity 回退原 balanced
 env FSDB_MDA=1 ./run.sh                          # 额外 dump 包缓冲数组，波形更大
 env AES_BLOCKS=515 ./run.sh                      # AES 回归全部 515 块并生成对应 FSDB
 env FSDB_FULL=1 ./run.sh                         # 2641 包也生成 regression.fsdb，可能很大
 env RUN_ROOT=/design/tb/sim_outputs ./run.sh     # 可选，路径按本机情况修改
 ```
 
-默认 `RUN_AES=1` 使用 `filelist_aes.f` 和 `tb_aes_random.sv` 单独编译；输出在同一次运行目录的 `aes/` 下，包含 `compile.log`、`sim.log`、`simv.daidir` 和 `aes_waves.fsdb`。`AES_BLOCKS` 范围为 2～515。`FSDB_FULL=1` 需要 `RUN_FULL=1`，在 `tb/regression.fsdb` 额外记录完整回归；失败时可参考部分波形调试，但失败文件不算通过。`AES_LOW_AREA=1/0/2` 的 50/5/5 拍为单块原语时序，不是整包延迟。`VCS_EXTRA_FLAGS` 可传空格分隔的本地 VCS 额外选项，不进行 shell 求值。
+默认 `RUN_AES=1` 使用 `filelist_aes.f` 和 `tb_aes_random.sv` 单独编译；输出在同一次运行目录的 `aes/` 下，包含 `compile.log`、`sim.log`、`simv.daidir` 和 `aes_waves.fsdb`。当 `AES_LOW_AREA=2` 时，独立 AES 测试也按 `AES_INTEGRITY_TIMING_OPT` 选择候选或原版；该变量默认 1，仅影响脚本的仿真参数，不设置综合参数。`AES_BLOCKS` 范围为 2～515。`FSDB_FULL=1` 需要 `RUN_FULL=1`，在 `tb/regression.fsdb` 额外记录完整回归；失败时可参考部分波形调试，但失败文件不算通过。`AES_LOW_AREA=1/0/2` 的 50/5/5 拍为单块原语时序，不是整包延迟。`VCS_EXTRA_FLAGS` 可传空格分隔的本地 VCS 额外选项，不进行 shell 求值。
 
 ## 6. `u_aes/g_fast` 可见但 `u_core` 没有波形
 
@@ -177,7 +190,7 @@ verdi -simflow -dbdir "/实际打印的路径/mdm_sec_XXXXXXXX/aes/simv.daidir" 
 
 不要用 `verdi -f filelist.f -ssf .../aes/aes_waves.fsdb`：`filelist.f` 包含的是包级 `tb_mdm_sec`，而该 FSDB 来自独立的 `tb_aes_random`。只重新读取 filelist 也不能保证继承生成 FSDB 时 VCS 的参数覆盖；两个 testbench 源码默认参数均为 1，可能显示 `g_low_area`。应加载生成该 FSDB 的 `simv.daidir`，以使用对应的设计数据库。
 
-包级原高速核路径有两份，分别是 `tb_mdm_sec.dut.u_cipher.u_aes.g_fast.u_core` 和 `tb_mdm_sec.dut.u_integrity.u_aes.g_fast.u_core`；独立 AES 波形则是 `tb_aes_random.dut.g_fast.u_core`。仅 `AES_LOW_AREA=0` 是 `g_fast`，默认值 1 是 `g_low_area`，2 是 `g_balanced`。对于 0，`g_low_area` 不是选中的分支：如果看到低面积层次但 `u_aes.clk` 有波形，优先检查是否加载了旧设计数据库或旧信号列表，并用同次运行的数据库和 FSDB 新开 Verdi；外层 `u_aes.clk` 对各配置共用，不能单独证明内核匹配。`g_fast` 是 generate 块，内部时钟完整路径含 `g_fast.u_core.clk`。
+包级原高速核路径有两份，分别是 `tb_mdm_sec.dut.u_cipher.u_aes.g_fast.u_core` 和 `tb_mdm_sec.dut.u_integrity.u_aes.g_fast.u_core`；独立 AES 波形则是 `tb_aes_random.dut.g_fast.u_core`。仅 `AES_LOW_AREA=0` 是 `g_fast`，默认值 1 是 `g_low_area`；2 时 cipher 为 `g_balanced`、integrity 默认是 `g_balanced_timing`，回退选项为 0 时 integrity 也为 `g_balanced`。对于 0，`g_low_area` 不是选中的分支：如果看到低面积层次但 `u_aes.clk` 有波形，优先检查是否加载了旧设计数据库或旧信号列表，并用同次运行的数据库和 FSDB 新开 Verdi；外层 `u_aes.clk` 对各配置共用，不能单独证明内核匹配。`g_fast` 是 generate 块，内部时钟完整路径含 `g_fast.u_core.clk`。
 
 先加入 `tb_mdm_sec.wave_case_id`，放大用例 1（加密 AES）、4（完整性 AES）或 6（两路 AES），同时加入相应实例的 `start/ready/busy/done`、`state/pair/round_state/key_reg/rcon`。接受请求为 `start && ready`，工作时 `pair` 经历 0～4；空闲时或未选 AES 的用例不会持续变化。
 

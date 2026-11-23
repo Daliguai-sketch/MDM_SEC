@@ -306,13 +306,13 @@ def diagram_aes():
     draw_box(draw, (385, 355, 685, 585), "Generate select", ["AES_LOW_AREA", "static 1 / 0 / 2"], "#FFF1D8")
     draw_box(draw, (790, 175, 1350, 335), "Serial  |  1  |  50 cycles", ["4 shared S-boxes", "10 rounds; II = 50"], "#E7F3EC")
     draw_box(draw, (790, 395, 1350, 555), "Original fast  |  0  |  5 cycles", ["2 rounds per cycle", "10 rounds; II = 5"], "#E8EEF9")
-    draw_box(draw, (790, 615, 1350, 775), "Area-optimized  |  2  |  5 cycles", ["shared-XOR MixColumns", "10 rounds; II = 5"], "#E8EEF9")
+    draw_box(draw, (790, 615, 1350, 775), "Balanced  |  2  |  5 cycles", ["original or timing candidate", "10 rounds; II = 5"], "#E8EEF9")
     draw_box(draw, (1480, 325, 1760, 615), "Result", ["done pulse", "block_out: 128b", "busy / ready"], "#E4F1F4")
     return image
 
 
 def diagram_aes_balanced():
-    image, draw = canvas("AES-128 area-optimized core", "One block per 5 cycles; both rounds are combinational between state registers")
+    image, draw = canvas("AES-128 balanced cores", "One block per 5 cycles; both rounds are combinational between state registers")
     arrow(draw, [(285, 495), (350, 495)])
     arrow(draw, [(620, 495), (720, 495)])
     arrow(draw, [(1010, 495), (1100, 495)])
@@ -325,7 +325,7 @@ def diagram_aes_balanced():
     draw_box(draw, (350, 365, 620, 625), "Registers", ["round_state", "key_reg / rcon", "pair 0 to 4"], "#FFF1D8")
     draw_box(draw, (720, 175, 1400, 335), "u_key_expand1 / 2", ["key1 then factored key2", "8 S-boxes, online per block"], "#E7F3EC")
     draw_box(draw, (720, 400, 1010, 590), "u_round1", ["16 S-boxes", "MixColumns", "AddRoundKey"], "#E8EEF9")
-    draw_box(draw, (1100, 400, 1400, 590), "u_round2", ["16 S-boxes", "MixColumns bypass", "when pair = 4"], "#E8EEF9")
+    draw_box(draw, (1100, 400, 1400, 590), "u_round2", ["16 S-boxes", "normal / last outputs", "last skips MixColumns"], "#E8EEF9")
     draw_box(draw, (1485, 365, 1760, 625), "Result", ["done on E5", "block_out: 128b", "next request on E5"], "#E4F1F4")
     draw.text((700, 775), "feedback after rounds 2, 4, 6 and 8", fill="#527287", font=image_font(23))
     return image
@@ -398,8 +398,8 @@ def diagram_bytes(name):
 
 def add_figure(doc, kind):
     captions = {
-        "aes": "图 1  AES-128 包装器及静态选择的三种微架构",
-        "aes_balanced": "图 1  5 拍面积优化 AES-128 数据路径与轮密钥扩展",
+        "aes": "图 1  AES-128 包装器及静态选择的配置",
+        "aes_balanced": "图 1  5 拍 balanced AES-128 逻辑数据路径与轮密钥扩展",
         "snow": "图 1  SNOW 3G 原语顶层数据及反馈关系",
         "zuc": "图 1  ZUC-128 原语顶层数据及反馈关系",
         "mdm": "图 1  MDM_SEC 包级顶层结构与两条独立通道",

@@ -17,16 +17,18 @@
 
 ### 新增 5 拍面积优化版本
 
-`AES_LOW_AREA=2` 新增 `mdm_aes128_balanced`，保留原高速核的两轮/拍、5 拍延迟和最小 5 拍启动间隔；末拍可同时接收下一块，密钥可逐块变化。`AES_LOW_AREA=0` 原高速版和 `1` 默认低面积版不变。历史参数名现为三值选择，并非布尔变量。
+`AES_LOW_AREA=2` 保留原高速核的两轮/拍、5 拍延迟和最小 5 拍启动间隔；末拍可同时接收下一块，密钥可逐块变化。cipher 使用原 `mdm_aes128_balanced`，integrity 默认使用 `mdm_aes128_balanced_timing` 时序候选；顶层 `AES_INTEGRITY_TIMING_OPT=0` 可回退，见 [aes_balanced_hierarchy.md](aes_balanced_hierarchy.md)。`AES_LOW_AREA=0` 原高速版和 `1` 默认低面积版不变。历史参数名现为三值选择，并非布尔变量。
 
-同用 Yosys 0.64、`synth -noabc; check -assert; stat` 对单 AES 比较：原高速版 **7,321** 个通用单元，优化版 **6,937** 个，减少 **384（5.25%）**，均为 XOR 数量变化；其他单元种类数量相同。`flatten; ltp -noff` 得到不计触发器的最长拓扑路径分别为 **70、68 层**，该指标不含工艺延时或负载，不能代替 STA。优化版以 88 XOR 的 32 位线性网络实现一列 MixColumns，同时化简第二轮密钥扩展的 XOR 依赖链；每核仍保留 40 个组合 S-box。balanced 核已将两轮的数据路径和密钥扩展拆为可例化模块；`make area-aes-balanced` 可重现该同口径对比，`make test-aes-formal` 可检查等价。
+以下为原 balanced（非完整性时序候选）的历史数据。同用 Yosys 0.64、`synth -noabc; check -assert; stat` 对单 AES 比较：原高速版 **7,321** 个通用单元，优化版 **6,937** 个，减少 **384（5.25%）**，均为 XOR 数量变化；其他单元种类数量相同。`flatten; ltp -noff` 得到不计触发器的最长拓扑路径分别为 **70、68 层**，该指标不含工艺延时或负载，不能代替 STA。优化版以 88 XOR 的 32 位线性网络实现一列 MixColumns，同时化简第二轮密钥扩展的 XOR 依赖链；每核仍保留 40 个组合 S-box。balanced 核已将两轮的数据路径和密钥扩展拆为可例化模块；`make area-aes-balanced` 可重现该同口径对比，`make test-aes-formal` 可检查等价。
 
 同口径 `mdm_sec` 顶层、`MAX_BYTES=2048` 的两路 AES 全部选择原高速版时为 **117,931** 个通用单元，全部选择优化版时为 **117,163** 个，减少 768（约 0.65%）；这个综合将缓冲映射到通用逻辑，目标 SRAM 宏会改变占比。可分别执行以下命令复现，并使用不同目录保存日志：
 
 ```sh
 make synth-generic BUILD_DIR=build/top-fast SYNTH_MAX_BYTES=2048 SYNTH_AES_LOW_AREA=0
-make synth-generic BUILD_DIR=build/top-balanced SYNTH_MAX_BYTES=2048 SYNTH_AES_LOW_AREA=2
+make synth-generic BUILD_DIR=build/top-balanced SYNTH_MAX_BYTES=2048 SYNTH_AES_LOW_AREA=2 SYNTH_AES_INTEGRITY_TIMING_OPT=0
 ```
+
+新完整性候选与回退配置的同版本 Yosys 0.71 顶层通用综合分别为 **117,332 / 117,172** 个单元，单个完整性 AES 为 **7,097 / 6,937**；目标库面积和时序必须另行测量。完整参数和层次对比见 [balanced AES 层次说明](aes_balanced_hierarchy.md)。
 
 **通用单元数不等于实际面积，也不是时序结果。** 两轮组合路径、网络 fanout、工具映射和布局布线均会影响结果；需目标工艺库与同一时钟约束下的综合、STA 和 PPA 才能确认实际面积收益及同频吞吐。模块实例路径、单核分层统计、`rc_flow` 使用注意事项及避免父子面积重复计算见 [balanced AES 层次说明](aes_balanced_hierarchy.md)；实现与接口见 [5 拍优化核规格书](specs/aes_balanced_core_spec.docx)。
 
@@ -42,7 +44,8 @@ make area-compare YOSYS=/path/to/yosys
 
 make synth-aes YOSYS=/path/to/yosys SYNTH_AES_LOW_AREA=1   # 默认低面积 AES
 make synth-aes YOSYS=/path/to/yosys SYNTH_AES_LOW_AREA=0   # 原 5 拍高速 AES
-make synth-aes YOSYS=/path/to/yosys SYNTH_AES_LOW_AREA=2   # 5 拍面积优化 AES
+make synth-aes YOSYS=/path/to/yosys SYNTH_AES_LOW_AREA=2   # 独立原 balanced，默认 OPT=0
+make synth-aes YOSYS=/path/to/yosys BUILD_DIR=build/aes-timing SYNTH_AES_LOW_AREA=2 SYNTH_BALANCED_TIMING_OPT=1  # 时序候选
 make synth-buffer YOSYS=/path/to/yosys BUFFER_CAP_BYTES=2052 BUFFER_READ_PORTS=2
 make synth-generic YOSYS=/path/to/yosys SYNTH_MAX_BYTES=2048 SYNTH_AES_LOW_AREA=1
 ```

@@ -5,8 +5,11 @@ BUILD_DIR ?= build/rtl
 JOBS ?= 2
 CHECK_MAX_BYTES ?= 2048
 CHECK_AES_LOW_AREA ?= 1
+CHECK_AES_INTEGRITY_TIMING_OPT ?= 1
 SYNTH_MAX_BYTES ?= 16
 SYNTH_AES_LOW_AREA ?= 1
+SYNTH_AES_INTEGRITY_TIMING_OPT ?= 1
+SYNTH_BALANCED_TIMING_OPT ?= 0
 BUFFER_CAP_BYTES ?= 2052
 BUFFER_READ_PORTS ?= 2
 AREA_BASE_REF ?= 711947b1c08a16688d1521be45426868f4fd03e9
@@ -55,15 +58,16 @@ VCS_AES_BUILD = $(BUILD_DIR)/vcs_aes_$(WAVE_AES_LOW_AREA)
 VMAKEFLAGS ?= $(if $(findstring verilator-cli,$(notdir $(VERILATOR))),CFG_CXXFLAGS_PCH_I=-include,)
 
 AES_RTL := rtl/mdm_aes_sbox.v rtl/mdm_aes_blocks.v rtl/mdm_aes_balanced_blocks.v \
-           rtl/mdm_aes128_serial.v rtl/mdm_aes128_fast.v rtl/mdm_aes128_balanced.v rtl/mdm_aes128.v
+           rtl/mdm_aes128_serial.v rtl/mdm_aes128_fast.v rtl/mdm_aes128_balanced.v \
+           rtl/mdm_aes128_balanced_timing.v rtl/mdm_aes128.v
 RTL := $(AES_RTL) rtl/mdm_snow3g.v rtl/mdm_zuc.v rtl/mdm_packet_buffer.v \
        rtl/mdm_cipher.v rtl/mdm_integrity.v rtl/mdm_sec.v
 HEADERS := rtl/mdm_sboxes.vh rtl/mdm_aes_sbox.vh rtl/mdm_aes_mix_balanced.vh
 
-.PHONY: all test example lint test-style test-specs test-aes test-aes-balanced-blocks test-aes-hierarchy test-fast test-balanced test-aes-formal area-aes-balanced test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
+.PHONY: all test example lint test-style test-specs test-aes test-aes-balanced-blocks test-aes-hierarchy test-fast test-balanced test-balanced-fallback test-aes-formal area-aes-balanced area-aes-timing test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network wave wave-packet wave-aes fsdb fsdb-packet fsdb-aes fsdb-check-packet-vectors fsdb-check-aes-vectors verdi-packet verdi-aes yosys-check yosys-parameters synth-generic synth-aes synth-buffer area-compare clean
 all: test
 
-test: lint test-style test-specs example test-aes test-aes-balanced-blocks test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-balanced test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network
+test: lint test-style test-specs example test-aes test-aes-balanced-blocks test-primitives test-lanes test-buffer test-packet test-tiny test-boundaries test-fast test-balanced test-balanced-fallback test-directed test-vcd-check test-vcd-trace test-vcs-flow test-u-network
 
 # Synthetic VCDs exercise hierarchy, variant and activity checks, including
 # rejection of the previous depth-4 packet trace.
@@ -130,10 +134,17 @@ $(BUILD_DIR)/tb_aes_balanced/Vtb_aes_random: $(AES_RTL) $(HEADERS) tests/rtl/tb_
 	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
 		--top-module tb_aes_random -GTEST_AES_LOW_AREA=2 --Mdir $(abspath $(@D)) $(AES_RTL) tests/rtl/tb_aes_random.sv
 
-test-aes: $(BUILD_DIR)/aes_vectors.txt $(BUILD_DIR)/tb_aes_small/Vtb_aes_random $(BUILD_DIR)/tb_aes_fast/Vtb_aes_random $(BUILD_DIR)/tb_aes_balanced/Vtb_aes_random
+$(BUILD_DIR)/tb_aes_balanced_timing/Vtb_aes_random: $(AES_RTL) $(HEADERS) tests/rtl/tb_aes_random.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_aes_random -GTEST_AES_LOW_AREA=2 -GTEST_BALANCED_TIMING_OPT=1 \
+		--Mdir $(abspath $(@D)) $(AES_RTL) tests/rtl/tb_aes_random.sv
+
+test-aes: $(BUILD_DIR)/aes_vectors.txt $(BUILD_DIR)/tb_aes_small/Vtb_aes_random $(BUILD_DIR)/tb_aes_fast/Vtb_aes_random $(BUILD_DIR)/tb_aes_balanced/Vtb_aes_random $(BUILD_DIR)/tb_aes_balanced_timing/Vtb_aes_random
 	$(BUILD_DIR)/tb_aes_small/Vtb_aes_random +VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)
 	$(BUILD_DIR)/tb_aes_fast/Vtb_aes_random +VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)
 	$(BUILD_DIR)/tb_aes_balanced/Vtb_aes_random +VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)
+	$(BUILD_DIR)/tb_aes_balanced_timing/Vtb_aes_random +VECTORS=$(abspath $(BUILD_DIR)/aes_vectors.txt)
 
 $(BUILD_DIR)/tb_primitives/Vtb_primitives: $(RTL) $(HEADERS) tests/rtl/tb_primitives.sv
 	@mkdir -p $(@D)
@@ -385,6 +396,16 @@ $(BUILD_DIR)/tb_boundaries_balanced/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_
 	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
 		--top-module tb_mdm_sec -GTEST_AES_LOW_AREA=2 -GTEST_MAX_BYTES=65535 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_mdm_sec.sv
 
+$(BUILD_DIR)/tb_packet_balanced_fallback/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_mdm_sec -GTEST_AES_LOW_AREA=2 -GTEST_AES_INTEGRITY_TIMING_OPT=0 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_mdm_sec.sv
+
+$(BUILD_DIR)/tb_boundaries_balanced_fallback/Vtb_mdm_sec: $(RTL) $(HEADERS) tests/rtl/tb_mdm_sec.sv
+	@mkdir -p $(@D)
+	MAKEFLAGS="$(VMAKEFLAGS)" $(VERILATOR) --binary --timing -j $(JOBS) -Wno-TIMESCALEMOD -Irtl \
+		--top-module tb_mdm_sec -GTEST_AES_LOW_AREA=2 -GTEST_AES_INTEGRITY_TIMING_OPT=0 -GTEST_MAX_BYTES=65535 --Mdir $(abspath $(@D)) $(RTL) tests/rtl/tb_mdm_sec.sv
+
 # Check that selecting the legacy five-cycle AES propagates through both lanes
 # and the top level, including all six packet modes and maximum-size wrap.
 test-fast: $(BUILD_DIR)/packet_vectors.txt $(BUILD_DIR)/boundary_vectors.txt $(BUILD_DIR)/tb_primitives_fast/Vtb_primitives \
@@ -403,34 +424,51 @@ test-balanced: $(BUILD_DIR)/packet_vectors.txt $(BUILD_DIR)/boundary_vectors.txt
 	$(BUILD_DIR)/tb_packet_balanced/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/packet_vectors.txt) +REQUIRE_PARALLEL_COVERAGE
 	$(BUILD_DIR)/tb_boundaries_balanced/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/boundary_vectors.txt)
 
+# Exercise the top-level rollback independently, including simultaneous lanes
+# and maximum packet capacity; never re-use the candidate's compiled binary.
+test-balanced-fallback: $(BUILD_DIR)/packet_vectors.txt $(BUILD_DIR)/boundary_vectors.txt \
+                        $(BUILD_DIR)/tb_packet_balanced_fallback/Vtb_mdm_sec $(BUILD_DIR)/tb_boundaries_balanced_fallback/Vtb_mdm_sec
+	$(BUILD_DIR)/tb_packet_balanced_fallback/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/packet_vectors.txt) +REQUIRE_PARALLEL_COVERAGE
+	$(BUILD_DIR)/tb_boundaries_balanced_fallback/Vtb_mdm_sec +VECTORS=$(abspath $(BUILD_DIR)/boundary_vectors.txt)
+
 # Formal checks use async2sync's reset model; target gate-level and asynchronous
 # reset sign-off remain the integrator's responsibility.
 test-aes-formal:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	@mkdir -p $(BUILD_DIR)
-	$(YOSYS) -Q -T -p 'read_verilog -Irtl rtl/mdm_aes_balanced_blocks.v tests/formal/aes_mix_miter.v; prep -top aes_mix_miter -flatten; sat -verify -prove mismatch 0' > $(BUILD_DIR)/aes-mix-formal.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl rtl/mdm_aes_balanced_blocks.v rtl/mdm_aes128_balanced_timing.v tests/formal/aes_mix_miter.v; prep -top aes_mix_miter -flatten; sat -verify -prove mismatch 0' > $(BUILD_DIR)/aes-mix-formal.log
 	@grep -q 'SAT proof finished - no model found: SUCCESS' $(BUILD_DIR)/aes-mix-formal.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl rtl/mdm_aes_sbox.v rtl/mdm_aes128_balanced_timing.v tests/formal/aes_sbox_timing_miter.v; prep -top aes_sbox_timing_miter -flatten; sat -verify -prove mismatch 0' > $(BUILD_DIR)/aes-sbox-timing-formal.log
+	@grep -q 'SAT proof finished - no model found: SUCCESS' $(BUILD_DIR)/aes-sbox-timing-formal.log
 	$(YOSYS) -Q -T -p 'read_verilog -Irtl rtl/mdm_aes_sbox.v rtl/mdm_aes_blocks.v rtl/mdm_aes_balanced_blocks.v rtl/mdm_aes128_fast.v rtl/mdm_aes128_balanced.v; hierarchy -check; proc; flatten mdm_aes128_fast mdm_aes128_balanced; opt_clean; equiv_make mdm_aes128_fast mdm_aes128_balanced equiv; hierarchy -check -top equiv; async2sync; equiv_simple; equiv_status -assert' > $(BUILD_DIR)/aes-balanced-equiv.log
 	@grep -q 'Equivalence successfully proven' $(BUILD_DIR)/aes-balanced-equiv.log
-	@echo 'PASS MixColumns SAT and fast/balanced AES equivalence (async2sync reset model)'
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl rtl/mdm_aes_sbox.v rtl/mdm_aes_blocks.v rtl/mdm_aes_balanced_blocks.v rtl/mdm_aes128_balanced.v rtl/mdm_aes128_balanced_timing.v; hierarchy -check; proc; flatten mdm_aes128_balanced mdm_aes128_balanced_timing; opt_clean; equiv_make -blacklist tests/formal/aes_timing_equiv_blacklist.txt mdm_aes128_balanced mdm_aes128_balanced_timing equiv; hierarchy -check -top equiv; async2sync; equiv_simple; equiv_status -assert' > $(BUILD_DIR)/aes-timing-equiv.log
+	@grep -q 'Equivalence successfully proven' $(BUILD_DIR)/aes-timing-equiv.log
+	@echo 'PASS both MixColumns/S-box SAT checks and fast/original/timing AES equivalence (async2sync reset model)'
 
 area-aes-balanced:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	$(PYTHON) tests/compare_aes_balanced_area.py --yosys "$(YOSYS)" --output "$(BUILD_DIR)/aes-balanced-area"
 
-# Check that an unflattened generic synthesis keeps the area-reportable stages,
-# and that both mdm_sec lanes select independent balanced AES cores.
+# Generic unit-weight graph only: not mapped area, delay, or STA.
+area-aes-timing:
+	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
+	$(PYTHON) tests/compare_aes_timing_structure.py --yosys "$(YOSYS)" --output "$(BUILD_DIR)/aes-timing-structure"
+
+# Check reportable stages in both cores and the default/fallback top choices.
 test-aes-hierarchy:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	@mkdir -p $(BUILD_DIR)
 	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(AES_RTL); hierarchy -check -top mdm_aes128_balanced; synth -top mdm_aes128_balanced -noabc; check -assert; stat; write_json $(BUILD_DIR)/aes-balanced-synth.json' > $(BUILD_DIR)/aes-balanced-synth-hierarchy.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(AES_RTL); hierarchy -check -top mdm_aes128_balanced_timing; synth -top mdm_aes128_balanced_timing -noabc; check -assert; stat; write_json $(BUILD_DIR)/aes-balanced-timing-synth.json' > $(BUILD_DIR)/aes-balanced-timing-synth-hierarchy.log
 	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES 16 -chparam AES_LOW_AREA 2; proc; opt_clean; check -assert; write_json $(BUILD_DIR)/aes-balanced-top.json' > $(BUILD_DIR)/aes-balanced-top-hierarchy.log
-	$(PYTHON) tests/check_aes_balanced_hierarchy.py --synth $(BUILD_DIR)/aes-balanced-synth.json --top $(BUILD_DIR)/aes-balanced-top.json
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES 16 -chparam AES_LOW_AREA 2 -chparam AES_INTEGRITY_TIMING_OPT 0; proc; opt_clean; check -assert; write_json $(BUILD_DIR)/aes-balanced-top-fallback.json' > $(BUILD_DIR)/aes-balanced-top-fallback-hierarchy.log
+	$(PYTHON) tests/check_aes_balanced_hierarchy.py --synth $(BUILD_DIR)/aes-balanced-synth.json --synth-timing $(BUILD_DIR)/aes-balanced-timing-synth.json --top $(BUILD_DIR)/aes-balanced-top.json --top-fallback $(BUILD_DIR)/aes-balanced-top-fallback.json
 
 yosys-check:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	@mkdir -p $(BUILD_DIR)
-	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES $(CHECK_MAX_BYTES) -chparam AES_LOW_AREA $(CHECK_AES_LOW_AREA); proc; opt; check -assert; stat' > $(BUILD_DIR)/yosys-check.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES $(CHECK_MAX_BYTES) -chparam AES_LOW_AREA $(CHECK_AES_LOW_AREA) -chparam AES_INTEGRITY_TIMING_OPT $(CHECK_AES_INTEGRITY_TIMING_OPT); proc; opt; check -assert; stat' > $(BUILD_DIR)/yosys-check.log
 	@tail -55 $(BUILD_DIR)/yosys-check.log
 
 # Invalid parameters must fail specifically at the elaboration guards.
@@ -441,29 +479,35 @@ yosys-parameters:
 		if $(YOSYS) -Q -T -p "read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES $$value" > $(BUILD_DIR)/invalid-$$value.log 2>&1; then \
 			echo "FAIL: MAX_BYTES=$$value was accepted"; exit 1; \
 		fi; \
-		grep -q 'ERROR: System task' $(BUILD_DIR)/invalid-$$value.log || { cat $(BUILD_DIR)/invalid-$$value.log; exit 1; }; \
+		grep -Eq 'ERROR:[[:space:]]*System task' $(BUILD_DIR)/invalid-$$value.log || { cat $(BUILD_DIR)/invalid-$$value.log; exit 1; }; \
 	done
 	@for value in 3 4; do \
 		if $(YOSYS) -Q -T -p "read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam AES_LOW_AREA $$value" > $(BUILD_DIR)/invalid-aes-$$value.log 2>&1; then \
 			echo "FAIL: AES_LOW_AREA=$$value was accepted"; exit 1; \
 		fi; \
-		grep -q 'ERROR: System task' $(BUILD_DIR)/invalid-aes-$$value.log || { cat $(BUILD_DIR)/invalid-aes-$$value.log; exit 1; }; \
+		grep -Eq 'ERROR:[[:space:]]*System task' $(BUILD_DIR)/invalid-aes-$$value.log || { cat $(BUILD_DIR)/invalid-aes-$$value.log; exit 1; }; \
+	done
+	@for mode in 0 1 2; do \
+		if $(YOSYS) -Q -T -p "read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam AES_LOW_AREA $$mode -chparam AES_INTEGRITY_TIMING_OPT 2" > $(BUILD_DIR)/invalid-aes-timing-$$mode.log 2>&1; then \
+			echo "FAIL: AES_INTEGRITY_TIMING_OPT=2 was accepted for AES_LOW_AREA=$$mode"; exit 1; \
+		fi; \
+		grep -Eq 'ERROR:[[:space:]]*System task' $(BUILD_DIR)/invalid-aes-timing-$$mode.log || { cat $(BUILD_DIR)/invalid-aes-timing-$$mode.log; exit 1; }; \
 	done
 	@for parameters in 'CAP_BYTES 0' 'CAP_BYTES 65537' 'READ_PORTS 0' 'READ_PORTS 3'; do \
 		set -- $$parameters; \
 		if $(YOSYS) -Q -T -p "read_verilog rtl/mdm_packet_buffer.v; hierarchy -check -top mdm_packet_buffer -chparam $$1 $$2" > $(BUILD_DIR)/invalid-buffer-$$1-$$2.log 2>&1; then \
 			echo "FAIL: $$parameters was accepted"; exit 1; \
 		fi; \
-		grep -q 'ERROR: System task' $(BUILD_DIR)/invalid-buffer-$$1-$$2.log || { cat $(BUILD_DIR)/invalid-buffer-$$1-$$2.log; exit 1; }; \
+		grep -Eq 'ERROR:[[:space:]]*System task' $(BUILD_DIR)/invalid-buffer-$$1-$$2.log || { cat $(BUILD_DIR)/invalid-buffer-$$1-$$2.log; exit 1; }; \
 	done
-	@echo 'PASS invalid MAX_BYTES, AES_LOW_AREA and packet-buffer parameters rejected by elaboration guards'
+	@echo 'PASS invalid MAX_BYTES, AES_LOW_AREA, AES_INTEGRITY_TIMING_OPT and packet-buffer parameters rejected'
 
 # Generic pre-technology mapping sanity check, NOT physical area/timing.
 # This maps memories to flip-flops; use target SRAMs for real implementation.
 synth-generic:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	@mkdir -p $(BUILD_DIR)
-	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES $(SYNTH_MAX_BYTES) -chparam AES_LOW_AREA $(SYNTH_AES_LOW_AREA); synth -top mdm_sec -noabc; check -assert; stat' > $(BUILD_DIR)/synth-generic.log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(RTL); hierarchy -check -top mdm_sec -chparam MAX_BYTES $(SYNTH_MAX_BYTES) -chparam AES_LOW_AREA $(SYNTH_AES_LOW_AREA) -chparam AES_INTEGRITY_TIMING_OPT $(SYNTH_AES_INTEGRITY_TIMING_OPT); synth -top mdm_sec -noabc; check -assert; stat' > $(BUILD_DIR)/synth-generic.log
 	@tail -65 $(BUILD_DIR)/synth-generic.log
 
 # Standalone hierarchical reports; each generic cell counts as one regardless
@@ -471,7 +515,7 @@ synth-generic:
 synth-aes:
 	@test -n "$(YOSYS)" || { echo 'Install Yosys (or set YOSYS=...)'; exit 1; }
 	@mkdir -p $(BUILD_DIR)
-	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(AES_RTL); hierarchy -check -top mdm_aes128 -chparam AES_LOW_AREA $(SYNTH_AES_LOW_AREA); synth -top mdm_aes128 -noabc; check -assert; stat' > $(BUILD_DIR)/synth-aes-$(SYNTH_AES_LOW_AREA).log
+	$(YOSYS) -Q -T -p 'read_verilog -Irtl $(AES_RTL); hierarchy -check -top mdm_aes128 -chparam AES_LOW_AREA $(SYNTH_AES_LOW_AREA) -chparam BALANCED_TIMING_OPT $(SYNTH_BALANCED_TIMING_OPT); synth -top mdm_aes128 -noabc; check -assert; stat' > $(BUILD_DIR)/synth-aes-$(SYNTH_AES_LOW_AREA).log
 	@tail -85 $(BUILD_DIR)/synth-aes-$(SYNTH_AES_LOW_AREA).log
 
 synth-buffer:

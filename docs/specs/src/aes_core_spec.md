@@ -2,13 +2,13 @@
 
 ## 1.1 Purpose
 
-本文规定 MDM_SEC 工程中 AES-128 块加密原语的 RTL 行为、接口、微架构和集成约束，供 RTL 设计、验证、综合、时序及系统集成人员评审。用户所称 **aes_core** 在当前 RTL 中对应顶层包装模块 `mdm_aes128`，并由参数选择 `mdm_aes128_serial`、`mdm_aes128_fast` 或 `mdm_aes128_balanced`；仓库中不存在名为 `aes_core` 的独立 Verilog module。
+本文规定 MDM_SEC 工程中 AES-128 块加密原语的 RTL 行为、接口、微架构和集成约束，供 RTL 设计、验证、综合、时序及系统集成人员评审。用户所称 **aes_core** 在当前 RTL 中对应顶层包装模块 `mdm_aes128`，并由参数选择 `mdm_aes128_serial`、`mdm_aes128_fast`、`mdm_aes128_balanced` 或 `mdm_aes128_balanced_timing`；仓库中不存在名为 `aes_core` 的独立 Verilog module。
 
 本说明描述 RTL 现状而非工艺签核承诺。除明确标注为已完成的通用综合或功能仿真以外，频率、标准单元面积、功耗和安全认证均为待定。若本文与基线 RTL 不一致，应提交问题并以受控版本的 RTL 和协议评审结论为准。
 
 ## 1.2 Scope
 
-本规范覆盖 `mdm_aes128` 的参数、块级接口、复位、请求与结果时序，以及低面积、原高速、5 拍面积优化三种可选实现。算法仅包含 128-bit key、128-bit block 的 **AES 加密变换**；AES-192、AES-256、AES 逆变换、密钥管理、DMA 和总线寄存器不在此核范围内。
+本规范覆盖 `mdm_aes128` 的参数、块级接口、复位、请求与结果时序，以及低面积、原高速和两种 5 拍 balanced 可选实现。算法仅包含 128-bit key、128-bit block 的 **AES 加密变换**；AES-192、AES-256、AES 逆变换、密钥管理、DMA 和总线寄存器不在此核范围内。
 
 CTR 模式加解密和 CMAC 完整性属于外围 `mdm_cipher` / `mdm_integrity` 的组合方式，不是本原语额外的端口功能。在 CTR 中，明文和密文均与由 AES 加密计数器得到的密钥流异或，因此不需要 AES 逆变换。
 
@@ -33,11 +33,11 @@ CTR 模式加解密和 CMAC 完整性属于外围 `mdm_cipher` / `mdm_integrity`
 
 | 特性 | 当前设计 |
 | --- | --- |
-| 顶层与实现 | `mdm_aes128`；`AES_LOW_AREA=1` 选择串行版，`0` 选择原高速版，`2` 选择 5 拍面积优化版，选择在 elaboration 时完成。 |
+| 顶层与实现 | `mdm_aes128`；`AES_LOW_AREA=1` 选择串行版，`0` 选择原高速版，`2` 选择 5 拍 balanced 原版或时序候选，选择在 elaboration 时完成。 |
 | 数据与密钥 | `key`、`block_in`、`block_out` 均 128 bit，高字节先表示标准十六进制字节序。 |
 | 算法 | AES-128 加密，10 轮；每次请求可使用不同密钥和输入。 |
 | 低面积配置 | 每轮 1 拍密钥扩展 + 4 拍数据列处理；50 周期延迟，最小 II 为 50 周期。 |
-| 高速配置 | 原高速版和面积优化版均组合展开每拍 2 轮；5 周期延迟，最小 II 为 5 周期。 |
+| 5 拍配置 | 原高速版及两个 balanced 版本均组合展开每拍 2 轮；5 周期延迟，最小 II 为 5 周期。 |
 | 块衔接 | 前一块的最后一个计算沿允许 `start && ready` 接受下一块；`busy` 与 `ready` 可以同时为 1。 |
 | 时钟/复位 | 单一 `clk` 上升沿；`rst_n` 异步低有效。复位释放同步由外部负责。 |
 | 结果 | `done` 为完成脉冲，无结果反压信号；`block_out` 寄存保持至下次完成或复位。 |
@@ -49,7 +49,7 @@ CTR 模式加解密和 CMAC 完整性属于外围 `mdm_cipher` / `mdm_integrity`
 | R1 | NIST FIPS 197, Advanced Encryption Standard, updated 2023，算法和 AES-128 示例；https://doi.org/10.6028/NIST.FIPS.197-upd1 |
 | R2 | NIST SP 800-38A, Recommendation for Block Cipher Modes of Operation: Methods and Techniques，CTR 模式背景。 |
 | R3 | NIST SP 800-38B, Recommendation for Block Cipher Modes of Operation: the CMAC Mode for Authentication，CMAC 背景。 |
-| R4 | `rtl/mdm_aes128.v`, `rtl/mdm_aes128_serial.v`, `rtl/mdm_aes128_fast.v`, `rtl/mdm_aes128_balanced.v`，本规范 RTL 基线。 |
+| R4 | `rtl/mdm_aes128.v`, `rtl/mdm_aes128_serial.v`, `rtl/mdm_aes128_fast.v`, `rtl/mdm_aes128_balanced.v`, `rtl/mdm_aes128_balanced_timing.v`，本规范 RTL 基线。 |
 | R5 | `rtl/mdm_aes_blocks.v`, `rtl/mdm_aes_balanced_blocks.v`, `rtl/mdm_aes_sbox.v`, `rtl/mdm_aes_sbox.vh`，数据路径及 S-box 实现；S-box 许可见源码。 |
 | R6 | `tests/rtl/tb_aes_random.sv`, `tests/rtl/tb_primitives.sv`, `docs/verification.md`, `docs/area_optimization.md`。 |
 
@@ -69,7 +69,7 @@ AES 将 16 字节按列组织为 4×4 字节状态矩阵。输入块首先与初
 
 [[DIAGRAM:aes]]
 
-图中参数选择为静态 generate，不是按块可变的运行时模式。三种实现的端口及标准答案一致，但低面积版与两个 5 拍版的延迟和连续请求边界不同。设计不将多个实现的逻辑同时作为运行时备份使用。
+图中参数选择为静态 generate，不是按块可变的运行时模式。各实现的端口及标准答案一致，但低面积版与 5 拍版的延迟和连续请求边界不同。`AES_LOW_AREA=2` 可进一步选择原 balanced 或时序候选；设计不将多个实现的逻辑同时作为运行时备份使用。
 
 | RTL 层次 | 作用 |
 | --- | --- |
@@ -77,6 +77,7 @@ AES 将 16 字节按列组织为 4×4 字节状态矩阵。输入块首先与初
 | `g_low_area.u_core` | `mdm_aes128_serial`，四个 S-box、列复用及 50 周期控制。 |
 | `g_fast.u_core` | `mdm_aes128_fast`，每周期两个 AES 轮的原高速组合数据路径。 |
 | `g_balanced.u_core` | `mdm_aes128_balanced`，保持 5 拍的面积优化版；详见 `aes_balanced_core_spec.docx`。 |
+| `g_balanced_timing.u_core` | `mdm_aes128_balanced_timing`，保持 5 拍的时序候选；目标时序需现场 STA。 |
 | `mdm_cipher.u_aes` / `mdm_integrity.u_aes` | MDM_SEC 的两个独立 AES 实例；不在两个通道之间共享一个块核。 |
 
 ### 2.2.2 Timing Requirement
@@ -123,7 +124,7 @@ AES 将 16 字节按列组织为 4×4 字节状态矩阵。输入块首先与初
 
 低面积控制状态为 `IDLE`、`ROUND_KEY`、`ROUND_DATA`。E0 保存 `round_state=block_in XOR key` 和初始密钥；每轮 `ROUND_KEY` 更新轮密钥，然后 `ROUND_DATA` 依次处理列 0～3。前 3 列暂存于 `partial_state[95:0]`，第 4 列与暂存结果组合形成下一轮状态；第 10 轮的第 4 列产生输出。
 
-两个 5 拍版本状态均为 `IDLE` / `COMPUTE`，组合逻辑形成 `key1/key2` 和 `round1/round2`，`pair=0..4` 顺次执行。最后一次的第二轮跳过 MixColumns。三种实现都是单块迭代复用结构而不是每拍接受一个独立块的深流水；末沿交接不表示可同时处理任意数量在途块。
+三个 5 拍实现状态均为 `IDLE` / `COMPUTE`，组合逻辑形成 `key1/key2` 和两轮结果，`pair=0..4` 顺次执行。最后一次的第二轮跳过 MixColumns；时序候选的普通反馈和最后轮输出分离。四种实现都是单块迭代复用结构而不是每拍接受一个独立块的深流水；末沿交接不表示可同时处理任意数量在途块。
 
 ### 2.2.6 Resource Consumption
 
@@ -132,14 +133,14 @@ AES 将 16 字节按列组织为 4×4 字节状态矩阵。输入块首先与初
 | 项目 | 低面积 | 原高速 / 5 拍优化 |
 | --- | --- | --- |
 | 核心状态和控制寄存器 | 按源码声明约 497 bit，含块输出和 `done` | 按源码声明约 397 bit，含块输出和 `done` |
-| S-box 结构 | 4 个组合 S-box，共享密钥与数据 | 原高速版为组合 function；优化版分层例化 32 个数据和 8 个密钥 S-box；实际映射待综合。 |
-| MixColumns | 1 个 32-bit 列单元，四列复用 | 每拍组合两轮，最后轮旁路；优化版使用 88 XOR 的列网络。 |
+| S-box 结构 | 4 个组合 S-box，共享密钥与数据 | 原高速版为组合 function；balanced 例化 32 个数据和 8 个密钥 S-box，时序候选的数据 S-box 内部合并为一层；实际映射待综合。 |
+| MixColumns | 1 个 32-bit 列单元，四列复用 | 每拍组合两轮，最后轮旁路；原 balanced 使用 88 XOR 网络，时序候选使用浅层 XOR 网络。 |
 | 外部 RAM / SRAM | 无 | 无 |
 | MDM_SEC 实例数量 | cipher、integrity 各 1 个 | cipher、integrity 各 1 个 |
 
 ### 2.2.7 Synthesis Analysis
 
-仓库已有 Yosys 0.64、`synth -noabc; check -assert; stat` 的历史通用综合参考：单个低面积 AES 共 **2,177 个通用单元**，其统计口径将不同类型单元都按一个计数。同条件原高速版为 7,321、5 拍优化版为 6,937 个通用单元（−5.25%）。这些数字不使用目标标准单元库、布局布线或时钟约束，不是面积、门等效数或 STA 结果；与目标 Synopsys 综合结果不能直接等同。
+仓库已有 Yosys 0.64、`synth -noabc; check -assert; stat` 的历史通用综合参考：单个低面积 AES 共 **2,177 个通用单元**，其统计口径将不同类型单元都按一个计数。同条件原高速版为 7,321、原 balanced 版为 6,937 个通用单元（−5.25%）。这些数字不使用目标标准单元库、布局布线或时钟约束，不是面积、门等效数或 STA 结果；与目标 Synopsys 综合结果不能直接等同。
 
 | 待填项 | 结果 |
 | --- | --- |
@@ -149,7 +150,7 @@ AES 将 16 字节按列组织为 4×4 字节状态矩阵。输入块首先与初
 | 目标频率、WNS/TNS、关键路径 | TBD |
 | DFT/scan 配置和面积增量 | TBD |
 
-建议分别对 `AES_LOW_AREA=1/0/2` 综合，固定相同库、时钟和 I/O 约束；记录 S-box 映射、寄存器、关键路径、负载与功耗活动，避免仅比较通用单元数。
+建议分别对 `AES_LOW_AREA=1/0/2` 综合，并对 `2` 的原版与时序候选做同约束 A/B 比较，固定相同库、时钟和 I/O 约束；记录 S-box 映射、寄存器、关键路径、负载与功耗活动，避免仅比较通用单元数。
 
 ### 2.2.8 Power Analysis
 
@@ -173,7 +174,7 @@ RTL 未包含专用时钟门控、功耗状态机或隔离单元。空闲时状�
 | 验证项 | 已有证据 / 待办 |
 | --- | --- |
 | 固定答案 | FIPS-197 key `000102030405060708090a0b0c0d0e0f`，input `00112233445566778899aabbccddeeff`，output `69c4e0d86a7b0430d8cdb78070b4c55a`。 |
-| 三种 AES 配置 | `make test-aes`：每种配置 515 块，自检数据及 50/5/5 周期延迟、最早连续启动；5 拍优化版还有等价和系统测试。 |
+| AES 配置 | `make test-aes`：四种实现各 515 块，自检数据及 50/5/5/5 周期延迟、最早连续启动；5 拍时序候选还有等价和系统测试。 |
 | S-box | `tb_primitives.sv` 对 256 个字节值比较模块和参考表。 |
 | 异常时序 | 测试忙时无效请求、输入变化、复位中止和输出/连续启动。 |
 | 目标环境 | 真正 VCS/PLI、目标库综合、STA、门级、形式和安全评估待项目环境确认。 |
@@ -184,7 +185,8 @@ RTL 未包含专用时钟门控、功耗状态机或隔离单元。空闲时状�
 
 | 参数 | 类型与默认值 | 约束与语义 |
 | --- | --- | --- |
-| `AES_LOW_AREA` | integer，默认 1 | 1：串行低面积；0：原高速；2：5 拍面积优化。其他取值为非法配置，RTL elaboration/仿真检查报错终止。 |
+| `AES_LOW_AREA` | integer，默认 1 | 1：串行低面积；0：原高速；2：5 拍 balanced。其他取值为非法配置，RTL elaboration/仿真检查报错终止。 |
+| `BALANCED_TIMING_OPT` | integer，默认 0 | 仅 `AES_LOW_AREA=2`：1 选时序候选，0 选原 balanced；`mdm_integrity` 默认传 1。其他值非法。 |
 
 ## 3.2 Port Definition
 

@@ -1,5 +1,6 @@
 # Generated RTL simulations, reports and Python bytecode
 /build/
+/.venv/
 /obj_dir/
 __pycache__/
 *.py[cod]

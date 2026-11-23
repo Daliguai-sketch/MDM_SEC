@@ -1,8 +1,10 @@
 // Selectable AES-128 implementation. AES_LOW_AREA is a historical parameter
 // name: 1 selects the default 50-cycle serial core, 0 the original 5-cycle
-// core, and 2 the area-optimized 5-cycle core. All share the same interface.
+// core, and 2 a 5-cycle balanced core. BALANCED_TIMING_OPT selects the
+// timing-oriented version only for mode 2; the default retains the original.
 module mdm_aes128 #(
-    parameter integer AES_LOW_AREA=1
+    parameter integer AES_LOW_AREA=1,
+    parameter integer BALANCED_TIMING_OPT=0
 ) (
     input  wire         clk,
     input  wire         rst_n,
@@ -21,8 +23,19 @@ module mdm_aes128 #(
                 $finish;
             end
         end
+        if (BALANCED_TIMING_OPT!=0 && BALANCED_TIMING_OPT!=1) begin: g_invalid_balanced_timing_opt
+            initial begin
+                $display("ERROR: BALANCED_TIMING_OPT must be 0 or 1");
+                $finish;
+            end
+        end
         if (AES_LOW_AREA==1) begin: g_low_area
             mdm_aes128_serial u_core (
+                .clk(clk), .rst_n(rst_n), .start(start), .ready(ready),
+                .key(key), .block_in(block_in), .busy(busy), .done(done), .block_out(block_out)
+            );
+        end else if (AES_LOW_AREA==2 && BALANCED_TIMING_OPT==1) begin: g_balanced_timing
+            mdm_aes128_balanced_timing u_core (
                 .clk(clk), .rst_n(rst_n), .start(start), .ready(ready),
                 .key(key), .block_in(block_in), .busy(busy), .done(done), .block_out(block_out)
             );

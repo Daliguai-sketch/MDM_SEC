@@ -229,13 +229,15 @@ class RtlDesignSpecsTest(unittest.TestCase):
 
     def test_important_contracts_are_present(self):
         expected = {
-            "aes_core_spec": ("E50", "E5", "69c4e0d86a7b0430d8cdb78070b4c55a", "AES_LOW_AREA"),
-            "aes_balanced_core_spec": ("E5", "AES_LOW_AREA=2", "7,321", "6,937",
+            "aes_core_spec": ("E50", "E5", "69c4e0d86a7b0430d8cdb78070b4c55a", "AES_LOW_AREA",
+                              "BALANCED_TIMING_OPT", "g_balanced_timing"),
+            "aes_balanced_core_spec": ("E5", "AES_LOW_AREA=2", "7,321", "6,937", "7,097",
+                                       "AES_INTEGRITY_TIMING_OPT", "mdm_aes128_balanced_timing",
                                        "70", "68", "69c4e0d86a7b0430d8cdb78070b4c55a"),
             "snow3g_core_spec": ("E33", "E34", "c54058f7", "advance", "35.216"),
             "zuc_core_spec": ("E33", "E34", "27bede74", "advance", "35.222"),
             "mdm_sec_spec": ("rsp_mac_match", "rsp_error", "MAX_BYTES", "65531",
-                             "16,512", "EIA0", "B-4", "B+4", "zeroization"),
+                             "AES_INTEGRITY_TIMING_OPT", "16,512", "EIA0", "B-4", "B+4", "zeroization"),
         }
         for stem, strings in expected.items():
             source = (SOURCE_DIR / (stem + ".md")).read_text(encoding="utf-8")

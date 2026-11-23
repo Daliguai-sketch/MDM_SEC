@@ -3,8 +3,9 @@ module tb_primitives #(parameter integer TEST_AES_LOW_AREA=1);
   localparam integer AES_CYCLES = (TEST_AES_LOW_AREA==1) ? 50 : 5;
   `include "mdm_aes_sbox.vh"
   reg [7:0] sbox_input=0;
-  wire [7:0] sbox_output;
+  wire [7:0] sbox_output,sbox_timing_output;
   mdm_aes_sbox sbox(.value(sbox_input),.result(sbox_output));
+  mdm_aes_sbox_timing sbox_timing(.value(sbox_input),.result(sbox_timing_output));
   reg [7:0] expected_sbox[0:255];
   string sbox_path;
   reg clk=0, rst_n=0;
@@ -34,7 +35,8 @@ module tb_primitives #(parameter integer TEST_AES_LOW_AREA=1);
         i=i+1) begin
       sbox_input=8'(i);
       #1;
-      if(aes_sbox(8'(i))!==expected_sbox[i] || sbox_output!==expected_sbox[i])
+      if(aes_sbox(8'(i))!==expected_sbox[i] || sbox_output!==expected_sbox[i] ||
+         sbox_timing_output!==expected_sbox[i])
         $fatal(1,"AES S-box mismatch at %0d",i);
     end
     snow_expect[0]=32'hc54058f7;

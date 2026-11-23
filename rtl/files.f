@@ -5,6 +5,7 @@ rtl/mdm_aes_balanced_blocks.v
 rtl/mdm_aes128_serial.v
 rtl/mdm_aes128_fast.v
 rtl/mdm_aes128_balanced.v
+rtl/mdm_aes128_balanced_timing.v
 rtl/mdm_aes128.v
 rtl/mdm_snow3g.v
 rtl/mdm_zuc.v

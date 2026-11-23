@@ -2,7 +2,8 @@
 // See docs/rtl_interface.md for the segmented input and output protocol.
 module mdm_sec #(
     parameter integer MAX_BYTES = 2048,
-    parameter integer AES_LOW_AREA = 1
+    parameter integer AES_LOW_AREA = 1,
+    parameter integer AES_INTEGRITY_TIMING_OPT = 1
 ) (
     input  wire         clk,
     input  wire         rst_n,
@@ -198,7 +199,7 @@ module mdm_sec #(
         .out_valid(enc_out_valid), .out_ready(1'b1), .out_data(enc_out),
         .out_bytes(enc_out_bytes), .done(enc_done)
     );
-    mdm_integrity #(.AES_LOW_AREA(AES_LOW_AREA)) u_integrity (
+    mdm_integrity #(.AES_LOW_AREA(AES_LOW_AREA), .BALANCED_TIMING_OPT(AES_INTEGRITY_TIMING_OPT)) u_integrity (
         .clk(clk), .rst_n(rst_n), .start(int_start), .alg(int_alg_q), .key(int_key_q),
         .count(count_q), .bearer(bearer_q), .direction(direction_q), .length(int_len),
         .in_valid(int_in_valid), .in_ready(int_in_ready), .in_data(int_in),

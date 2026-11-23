@@ -102,7 +102,7 @@ make fsdb-packet FSDB_MDA=1           # 额外记录共享 input buffer 的存�
 ### `u_aes` 可见但 `u_core` 没有波形
 
 1. 先确认文件是 `.fsdb` 还是 `.vcd`。旧版 `make wave` 的**包级 VCD**因 Verilator 深度 4 会漏掉 `u_core`；更新后按 [VCD 说明](waveforms.md) 重新编译仿真。该 Verilator 选项不会影响本节 VCS/FSDB 流程。
-2. 确认实际 testbench 和配置：`tb_mdm_sec.dut.u_cipher.u_aes.g_fast.u_core` 是原高速加密通道，`tb_mdm_sec.dut.u_integrity.u_aes.g_fast.u_core` 是完整性通道；独立 AES 则是 `tb_aes_random.dut.g_fast.u_core`。`g_fast` 仅在参数为 0 时实例化，参数 2 是 `g_balanced`、1 是 `g_low_area`。包级 `sim.log` 的 `DIRECTED configuration` 显示实际参数。
+2. 确认实际 testbench 和配置：`tb_mdm_sec.dut.u_cipher.u_aes.g_fast.u_core` 是原高速加密通道，`tb_mdm_sec.dut.u_integrity.u_aes.g_fast.u_core` 是完整性通道；独立 AES 则是 `tb_aes_random.dut.g_fast.u_core`。`g_fast` 仅在参数为 0 时实例化，参数 1 是 `g_low_area`；参数 2 时 cipher 是 `g_balanced`，integrity 默认是 `g_balanced_timing`（可回退）。包级 `sim.log` 的 `DIRECTED configuration` 显示实际参数。
 3. 确认当前打开的是同一次仿真的 FSDB 与 VCS 数据库，不能把包级的 `simv.daidir` 和独立 AES 的 FSDB 交叉使用。源码层次可见不等于 FSDB 中记录了相应信号。当前 bench 在 `+FSDB=...` 时使用 `$fsdbDumpvars(0,tb_mdm_sec)`（独立 AES 是 `tb_aes_random`），请求递归记录普通信号；VCS 默认带 `-debug_access+all -kdb -lca`。`FSDB_MDA=1` 仅添加包缓冲存储数组，不是开启 AES 普通信号的开关。查看编译及仿真日志中的 FSDB/PLI 警告和实际 `Writing ... FSDB` 路径；注意 FSDB 非空本身不能证明内部信号已记录。
 4. 区分“层次/信号不存在或无值”与“信号有值但不变化”。后者先在包波形加 `wave_case_id`，放大用例 1（加密 AES）、4（完整性 AES）或 6（两路 AES），同时查看 `start/ready/busy/done`、`state/pair/round_state`；空闲时或其他算法用例不会持续跳变。仍有问题请保留实际运行命令、匹配的 `compile.log` / `sim.log` 以及现象截图，按数据安全要求脱敏，不要发送真实密钥。
 

@@ -4,8 +4,9 @@ module aes_mix_miter (
     input wire [31:0] column,
     output wire mismatch
 );
-    wire [31:0] actual;
+    wire [31:0] actual, actual_timing;
     mdm_aes_balanced_mix_column u_dut (.data_in(column), .data_out(actual));
+    mdm_aes_balanced_mix_column_timing u_timing (.data_in(column), .data_out(actual_timing));
 
     function automatic [7:0] ref_xtime(input [7:0] b);
         ref_xtime = {b[6:0],1'b0} ^ (b[7] ? 8'h1b : 8'h00);
@@ -21,5 +22,5 @@ module aes_mix_miter (
         a ^ b ^ ref_xtime(c) ^ ref_xtime(d) ^ d,
         ref_xtime(a) ^ a ^ b ^ c ^ ref_xtime(d)
     };
-    assign mismatch = actual != reference;
+    assign mismatch = (actual != reference) || (actual_timing != reference);
 endmodule

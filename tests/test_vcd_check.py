@@ -107,6 +107,11 @@ class PacketVcdCheckTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertIn("PASS packet VCD", result.stdout)
 
+    def test_balanced_integrity_timing_trace(self):
+        result = self.run_check(packet_vcd("g_balanced", "g_balanced_timing"))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("PASS packet VCD", result.stdout)
+
     def test_old_shallow_trace_is_rejected(self):
         result = self.run_check(packet_vcd(None, None))
         self.assertNotEqual(result.returncode, 0)

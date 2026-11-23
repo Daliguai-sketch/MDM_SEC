@@ -1,7 +1,10 @@
 `timescale 1ns/1ps
 // Check changing keys/inputs, ignored busy requests, exact latency,
 // final-edge reissue, idle gaps and reset at several points in a block.
-module tb_aes_random #(parameter integer TEST_AES_LOW_AREA=1);
+module tb_aes_random #(
+    parameter integer TEST_AES_LOW_AREA=1,
+    parameter integer TEST_BALANCED_TIMING_OPT=0
+);
     localparam integer CYCLES = (TEST_AES_LOW_AREA==1) ? 50 : 5;
     localparam integer MAX_VECTORS = 1024;
     reg clk=0,rst_n=0,start=0;
@@ -9,7 +12,7 @@ module tb_aes_random #(parameter integer TEST_AES_LOW_AREA=1);
     reg [127:0] key=0,block_in=0;
     wire ready,busy,done;
     wire [127:0] block_out;
-    mdm_aes128 #(.AES_LOW_AREA(TEST_AES_LOW_AREA)) dut(
+    mdm_aes128 #(.AES_LOW_AREA(TEST_AES_LOW_AREA), .BALANCED_TIMING_OPT(TEST_BALANCED_TIMING_OPT)) dut(
         .clk(clk),.rst_n(rst_n),.start(start),.ready(ready),
         .key(key),.block_in(block_in),.busy(busy),.done(done),.block_out(block_out)
     );
@@ -102,6 +105,8 @@ module tb_aes_random #(parameter integer TEST_AES_LOW_AREA=1);
     endtask
 
     initial begin
+        $display("AES configuration AES_LOW_AREA=%0d BALANCED_TIMING_OPT=%0d",
+                 TEST_AES_LOW_AREA,TEST_BALANCED_TIMING_OPT);
         if (!$value$plusargs("VECTORS=%s",vector_path))
             $fatal(1,"pass +VECTORS=path");
         fd=$fopen(vector_path,"r");

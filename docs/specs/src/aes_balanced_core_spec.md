@@ -2,7 +2,7 @@
 
 ## 1.1 Purpose
 
-本文规定 MDM_SEC 的 **5 拍面积优化 AES-128 块加密核**的 RTL 架构、接口、时序、验证和集成要求。独立 Verilog 模块为 `mdm_aes128_balanced`，控制及寄存器位于 `rtl/mdm_aes128_balanced.v`，组合子模块位于 `rtl/mdm_aes_balanced_blocks.v`；工程包装器 `mdm_aes128` 在 `AES_LOW_AREA=2` 时静态选择该核。
+本文规定 MDM_SEC 的 **5 拍 balanced AES-128 块加密核**的 RTL 架构、接口、时序、验证和集成要求。原面积优化模块为 `mdm_aes128_balanced`，控制及寄存器位于 `rtl/mdm_aes128_balanced.v`，组合子模块位于 `rtl/mdm_aes_balanced_blocks.v`。新增完整性时序候选 `mdm_aes128_balanced_timing` 位于 `rtl/mdm_aes128_balanced_timing.v`；两者均为 5 拍。未特别标明候选的原网络说明及历史面积数字针对前者。
 
 本文与同一 Git 提交中的 RTL 配套。5 拍是周期协议，不是目标工艺频率或面积签核；目标标准单元、约束、PVT 和布局布线结果未提供，物理 PPA 与安全认证均为 TBD。
 
@@ -31,11 +31,11 @@
 
 | 特性 | 实现 |
 | --- | --- |
-| RTL 模块 | `mdm_aes128_balanced`，也可直接例化；接口与原 `mdm_aes128_fast` 一致。 |
-| 系统选择 | `AES_LOW_AREA=2` 选择新核；原 `0` 高速与 `1` 低面积配置保持不变，默认仍为 1。 |
+| RTL 模块 | `mdm_aes128_balanced` 和 `mdm_aes128_balanced_timing` 也可直接例化；接口与原 `mdm_aes128_fast` 一致。 |
+| 系统选择 | `AES_LOW_AREA=2` 时 cipher 选择原 balanced，integrity 默认选择时序候选；`AES_INTEGRITY_TIMING_OPT=0` 回退。`0` 高速与 `1` 低面积保持不变，默认仍为 1。 |
 | 块时序 | E0 接受，E1～E5 每拍处理连续两轮，E5 输出；延迟和最小 II 均为 5 周期。 |
 | 连续请求 | 旧块最后计算沿可同时接收下一块；每块可更换 key，`busy` 与 `ready` 可同时为 1。 |
-| 面积优化 | MixColumns 使用 32-bit 线性 XOR 公共子表达式网络；两轮密钥扩展的第二轮 XOR 链代数化简。 |
+| 实现取舍 | 原版 MixColumns 使用 88-XOR 共享网络；完整性候选使用较浅的 XOR 网络、分离末轮输出并平坦化数据 S-box 内层。两版均使用代数化简的第二轮密钥扩展。 |
 | 层次分析 | 两轮和密钥扩展拆成子模块；需在综合报告中确认层次未被 flatten/ungroup。 |
 | 并行资源 | 每拍组合展开 32 个数据 S-box、8 个密钥扩展 S-box；不把两个 MDM_SEC 通道合并。 |
 | 时钟和复位 | 统一上升沿时钟、异步低有效复位；复位释放同步由外部负责。 |
@@ -47,7 +47,7 @@
 | --- | --- |
 | R1 | NIST FIPS 197, Advanced Encryption Standard, updated 2023；https://doi.org/10.6028/NIST.FIPS.197-upd1 |
 | R2 | NIST SP 800-38A / SP 800-38B：CTR 和 CMAC，均由外围通道实现。 |
-| R3 | `rtl/mdm_aes128_balanced.v`, `rtl/mdm_aes_balanced_blocks.v`, `rtl/mdm_aes_mix_balanced.vh`, `rtl/mdm_aes128_fast.v`, `rtl/mdm_aes128.v`。 |
+| R3 | `rtl/mdm_aes128_balanced.v`, `rtl/mdm_aes128_balanced_timing.v`, `rtl/mdm_aes_balanced_blocks.v`, `rtl/mdm_aes_mix_balanced.vh`, `rtl/mdm_aes128_fast.v`, `rtl/mdm_aes128.v`。 |
 | R4 | `rtl/mdm_aes_sbox.v` / `rtl/mdm_aes_sbox.vh`：AES S-box，BearSSL MIT 许可及版权原文保留在源码。 |
 | R5 | Joe Bachir 的 AES MixColumns 88-XOR depth-5 电路，MIT；该电路源自 Jeremy Jean 的 88-XOR 工作（ePrint 2026/1481，Jean 首创）。来源及修改说明见 `rtl/mdm_aes_mix_balanced.vh`。 |
 | R6 | `tests/rtl/tb_aes_random.sv`, `tests/rtl/tb_aes_balanced_blocks.sv`, `tests/formal/aes_mix_miter.v`, `docs/aes_balanced_hierarchy.md`, `docs/verification.md`。 |
@@ -66,7 +66,7 @@ AES 将 16 字节按列映射为 4×4 字节状态。输入块先与初始 key �
 
 [[DIAGRAM:aes_balanced]]
 
-图中两个轮函数和两次密钥扩展在一个时钟周期内组合串接；图中间的两个轮不是两个寄存器流水级。一次选择只实例化串行版、原高速版或本优化版中的一种。
+图中两个轮函数和两次密钥扩展在一个时钟周期内组合串接；图中间的两个轮不是两个寄存器流水级。图为逻辑示意，时序候选将普通反馈和末轮结果分开。每个包装器一次只实例化串行版、原高速版或两个 balanced 版本之一。
 
 | 部分 | 职责 |
 | --- | --- |
@@ -116,6 +116,8 @@ AES 将 16 字节按列映射为 4×4 字节状态。输入块先与初始 key �
 
 模块划分参考仓库 Python AES 的 `key_expansion`、`sub_bytes`、`shift_rows`、`mix_columns` 和 `add_round_key`；没有增加寄存器。层次报告需检查工具是否 flatten/ungroup；父级若包含子级，不能重复累加面积。
 
+完整性时序候选保留轮、SubBytes、ShiftRows、MixColumns 和 AddRoundKey 层次，但数据 S-box 内部三层合并以允许跨层综合；密钥扩展的 S-box 保持原层次。候选的列混合采用深度导向 XOR 结构，普通反馈和末轮输出使用不同的 AddRoundKey，普通反馈不经过末轮选择 mux。该变更可能增加面积，且不能保证目标库实际时序改善。
+
 ### 2.2.5 Pipeline Design
 
 本核是两轮展开的单块迭代结构，不是每周期能接收新块的 10 级深流水。`round_state/key_reg` 在 E1～E4 保存结果；E5 写 `block_out`。同沿新请求具有对状态/key 寄存器的装载优先级，旧结果仍由沿前的轮组合逻辑产生并写入独立输出寄存器。
@@ -152,6 +154,8 @@ C2 = C  XOR A2       D2 = D XOR B2
 
 每类通用单元均按 1 个计数，拓扑路径的各单元同样不带延时权重；结果不是标准单元面积、门等效数、功耗或 STA。综合器和工艺库可能重排该网络；减小通用单元数或拓扑层数不保证真实面积下降或频率不变。运行 `make area-aes-balanced` 可复现同口径报告。
 
+另以 Yosys 0.71 比较原 balanced 和完整性时序候选：通用单元 6,937 / 7,097；`round_state[99]` 到 `[2]` 的单位权重拓扑为 65 / 61 级，任意状态反馈最深 68 / 66 级。方法和限制见 `make area-aes-timing` 与 `docs/aes_balanced_hierarchy.md`；这不表示节省了某个 ps 数值或 375 MHz 已收敛。
+
 | 物理签核项 | 状态 |
 | --- | --- |
 | 工艺、库、PVT、时钟和 I/O SDC | TBD |
@@ -165,7 +169,7 @@ C2 = C  XOR A2       D2 = D XOR B2
 
 ### 2.2.9 Debug and Trace
 
-建议观察 `state`、`pair`、`rcon`、`round_state`、`key_reg`、`key1/key2`、`round1/round2` 及 `start/ready/busy/done/block_out`。包装器路径为 `g_balanced.u_core`；在 E0、E5 和连续块交接边界检查时序。
+建议观察 `state`、`pair`、`rcon`、`round_state`、`key_reg`、`key1/key2`、`round1` 及 `start/ready/busy/done/block_out`。原版包装器路径为 `g_balanced.u_core`，时序候选为 `g_balanced_timing.u_core`；后者分别使用 `round2_normal/round2_last`。工具可能增加 generate 层次；在 E0、E5 和连续块交接边界检查时序。
 
 波形可能泄漏 key、明文和中间轮状态，不应在生产或公开文件中记录真实密钥。综合 flatten 或优化会改变内部节点名称；真实 VCS/Verdi PLI 及原生 FSDB 需要在用户授权环境验证。
 
@@ -176,9 +180,9 @@ C2 = C  XOR A2       D2 = D XOR B2
 | 固定答案 | FIPS-197 key `000102030405060708090a0b0c0d0e0f`，input `00112233445566778899aabbccddeeff`，output `69c4e0d86a7b0430d8cdb78070b4c55a`。 |
 | AES 回归 | `make test-aes`：新核 515 块，覆盖每块变换 key、5 拍延迟/最早连续启动、忙时无效请求、输入变化及复位中止；向量独立交叉检查 PyCryptodome。 |
 | 模块与层次 | `make test-aes-balanced-blocks` 对比 518 个 Python 中间状态向量；`make test-aes-hierarchy` 检查综合后可报告的模块及顶层两路独立实例。 |
-| 数学等价 | `make test-aes-formal`：MixColumns 的全输入 SAT 对比通过；优化核与原高速核的 Yosys `equiv_simple` 比对点通过。异步复位采用 `async2sync`，假设异步信号对时钟同步、异步触发器输入为负保持时间；并非任意复位释放波形的无条件证明。 |
-| 双通道系统 | `make test-balanced`：原语、两条通道、2641 个 2048 字节容量包和 12 个最大容量边界包通过。 |
-| 四态冒烟 | 包内 RTL 和 testbench 经 Icarus WebAssembly 通过 20 个定向包和 8 个 AES 块；FSDB 宏仅做 HDL 编译，未执行 PLI。 |
+| 数学等价 | `make test-aes-formal`：两种 MixColumns 和两种 S-box 的全输入 SAT 对比；原高速、原 balanced 与时序候选分别使用 Yosys `equiv_simple` 对比。异步复位采用 `async2sync`，假设异步信号对时钟同步、异步触发器输入为负保持时间；并非任意复位释放波形的无条件证明。 |
+| 双通道系统 | `make test-balanced`：原语、两条通道、2641 个 2048 字节容量包和 12 个最大容量边界包；`make test-balanced-fallback` 对回退配置重复包级回归。 |
+| 四态冒烟 | 转网包内 RTL 和 testbench 经 Icarus WebAssembly，时序候选及回退配置各通过 20 个定向包和 8 个 AES 块；FSDB 宏仅做 HDL 编译，未执行 PLI。 |
 | 待办 | 目标库综合、同频 STA、DFT、门级、真实 VCS/PLI 和侧信道评估仍待完成。 |
 
 # 3 I/O Interface
@@ -189,7 +193,9 @@ C2 = C  XOR A2       D2 = D XOR B2
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `AES_LOW_AREA` | 1 | 0：原高速 5/5 拍；1：低面积 50/50 拍；2：面积优化 5/5 拍；其他值非法。 |
+| `AES_LOW_AREA` | 1 | 0：原高速 5/5 拍；1：低面积 50/50 拍；2：balanced 5/5 拍；其他值非法。 |
+| `AES_INTEGRITY_TIMING_OPT` | 1 | `mdm_sec` 顶层参数；`AES_LOW_AREA=2` 时 1 让完整性选时序候选，0 选原 balanced；cipher 不变。 |
+| `BALANCED_TIMING_OPT` | 0 | `mdm_aes128` 包装器参数，仅 `AES_LOW_AREA=2` 有效；`mdm_integrity` 默认传 1。 |
 
 ```verilog
 mdm_sec #(.MAX_BYTES(2048), .AES_LOW_AREA(2)) u_sec (...);

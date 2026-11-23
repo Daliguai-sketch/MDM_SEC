@@ -1,7 +1,8 @@
 `timescale 1ns/1ps
 module tb_mdm_sec #(
     parameter integer TEST_MAX_BYTES=2048,
-    parameter integer TEST_AES_LOW_AREA=1
+    parameter integer TEST_AES_LOW_AREA=1,
+    parameter integer TEST_AES_INTEGRITY_TIMING_OPT=1
 );
     reg clk=0,rst_n=0;
     always #5 clk=~clk;
@@ -20,7 +21,8 @@ module tb_mdm_sec #(
     wire [127:0] cipher_data;
     wire [15:0] rsp_cipher_bytes;
     wire [15:0] cipher_keep;
-    mdm_sec #(.MAX_BYTES(TEST_MAX_BYTES),.AES_LOW_AREA(TEST_AES_LOW_AREA)) dut(.*);
+    mdm_sec #(.MAX_BYTES(TEST_MAX_BYTES),.AES_LOW_AREA(TEST_AES_LOW_AREA),
+              .AES_INTEGRITY_TIMING_OPT(TEST_AES_INTEGRITY_TIMING_OPT)) dut(.*);
 
     // Waveform-friendly markers: prelude, command, input, run, response,
     // output and case-complete. -1 identifies the reset/error prelude.
@@ -257,7 +259,8 @@ module tb_mdm_sec #(
         if (!$value$plusargs("VECTORS=%s",vector_path))
             $fatal(1,"pass +VECTORS=path");
         if ($test$plusargs("DIRECTED_COVERAGE"))
-            $display("DIRECTED configuration MAX_BYTES=%0d AES_LOW_AREA=%0d",TEST_MAX_BYTES,TEST_AES_LOW_AREA);
+            $display("DIRECTED configuration MAX_BYTES=%0d AES_LOW_AREA=%0d AES_INTEGRITY_TIMING_OPT=%0d",
+                     TEST_MAX_BYTES,TEST_AES_LOW_AREA,TEST_AES_INTEGRITY_TIMING_OPT);
         fd=$fopen(vector_path,"r");
         if (fd==0) $fatal(1,"cannot open %s",vector_path);
         for(i=2;

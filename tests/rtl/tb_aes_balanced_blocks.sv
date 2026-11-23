@@ -6,7 +6,8 @@ module tb_aes_balanced_blocks;
     reg [7:0] rcon, rcon2;
     reg last_round;
     wire [127:0] sub, shifted, mixed, added, initial_state;
-    wire [127:0] key1, key2, round_normal, round_selected;
+    wire [127:0] key1, key2, round_normal, round_selected, timing_normal, timing_last;
+    wire [127:0] timing_mixed;
     reg [127:0] expected_sub, expected_shifted, expected_mixed;
     reg [127:0] expected_normal, expected_last, expected_key1, expected_key2;
     reg [255:0] seen_rcon=0;
@@ -36,6 +37,12 @@ module tb_aes_balanced_blocks;
     mdm_aes_balanced_round #(.MAY_SKIP_MIX(1)) u_round_selected (
         .state_in(state_in), .round_key(key1), .last_round(last_round), .state_out(round_selected)
     );
+    mdm_aes_balanced_mix_columns_timing u_timing_mix (
+        .state_in(shifted), .state_out(timing_mixed)
+    );
+    mdm_aes_balanced_round_timing #(.WITH_LAST_OUTPUT(1)) u_timing_round (
+        .state_in(state_in), .round_key(key1), .normal_out(timing_normal), .last_out(timing_last)
+    );
 
     initial begin
         if (!$value$plusargs("VECTORS=%s",vector_path))
@@ -57,6 +64,8 @@ module tb_aes_balanced_blocks;
                 $fatal(1,"normal round mismatch at vector %0d",count);
             if (round_selected!==(last_round ? expected_last : expected_normal))
                 $fatal(1,"final-round bypass mismatch at vector %0d",count);
+            if (timing_mixed!==expected_mixed || timing_normal!==expected_normal || timing_last!==expected_last)
+                $fatal(1,"timing-oriented mix/normal/final mismatch at vector %0d",count);
             seen_rcon[rcon]=1'b1;
             if (last_round) last=last+1;
             else ordinary=ordinary+1;

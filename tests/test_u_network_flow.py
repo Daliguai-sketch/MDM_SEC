@@ -23,7 +23,7 @@ SHELL_VCS = r'''#!/bin/sh
 set -eu
 printf '%s\n' "$@" > compile_args.txt
 if [ "${MOCK_COMPILE_FAIL:-0}" = 1 ]; then exit 17; fi
-top= filelist= log= variant= size= tab= pli= prev= pli_next=0 macro=0
+top= filelist= log= variant= timing= size= tab= pli= prev= pli_next=0 macro=0
 for arg in "$@"; do
     if [ "$prev" = -top ]; then top=$arg; fi
     if [ "$prev" = -f ]; then filelist=$arg; fi
@@ -35,11 +35,14 @@ for arg in "$@"; do
         -pvalue+tb_mdm_sec.TEST_MAX_BYTES=*) size=${arg#*=} ;;
         -pvalue+tb_mdm_sec.TEST_AES_LOW_AREA=*) variant=${arg#*=} ;;
         -pvalue+tb_aes_random.TEST_AES_LOW_AREA=*) variant=${arg#*=} ;;
+        -pvalue+tb_mdm_sec.TEST_AES_INTEGRITY_TIMING_OPT=*) timing=${arg#*=} ;;
+        -pvalue+tb_aes_random.TEST_BALANCED_TIMING_OPT=*) timing=${arg#*=} ;;
     esac
     prev=$arg
 done
 [ -n "$log" ] && [ -r "$filelist" ] && [ -r "$tab" ] && [ -r "$pli" ]
 [ "$macro" = 1 ] && { [ "$variant" = 0 ] || [ "$variant" = 1 ] || [ "$variant" = 2 ]; }
+[ "$timing" = 0 ] || [ "$timing" = 1 ]
 case "$top" in
     tb_mdm_sec) tb=tb_mdm_sec.sv; [ "$size" = 2048 ] ;;
     tb_aes_random) tb=tb_aes_random.sv ;;
@@ -60,6 +63,7 @@ done < ../vc/mdm_sec_rtl.vc
 [ -r ../vc/mdm_sboxes.vh ] && [ -r ../vc/mdm_aes_sbox.vh ] && [ -r ../vc/mdm_aes_mix_balanced.vh ]
 printf '%s\n' "$top" > mock_top
 printf '%s\n' "$variant" > mock_variant
+printf '%s\n' "$timing" > mock_timing
 mkdir -p simv.daidir
 printf 'MOCK VCS COMPILER ONLY; NO RTL WAS COMPILED\n' > "$log"
 cat > simv <<'END_SIMV'
@@ -89,8 +93,12 @@ printf '%s\n' "$@" > "$kind.args"
 if [ "${MOCK_RUN_FAIL:-}" = "$kind" ]; then exit 29; fi
 top=$(cat mock_top)
 variant=$(cat mock_variant)
+timing=$(cat mock_timing)
 if [ "${MOCK_WRONG_VARIANT:-0}" = 1 ]; then
     if [ "$variant" = 0 ]; then variant=1; else variant=0; fi
+fi
+if [ "${MOCK_WRONG_TIMING:-0}" = 1 ] || [ "${MOCK_WRONG_TIMING:-0}" = "$kind" ]; then
+    if [ "$timing" = 0 ]; then timing=1; else timing=0; fi
 fi
 case "$kind" in
     regression)
@@ -99,15 +107,21 @@ case "$kind" in
         ;;
     wave)
         [ "$top" = tb_mdm_sec ] && [ "$directed" = 1 ] && [ -n "$fsdb" ]
-        printf 'DIRECTED configuration MAX_BYTES=2048 AES_LOW_AREA=%s\nPASS directed waveform cases: mock\nPASS 20 packet vectors (MAX_BYTES=2048), mock\n' "$variant" > "$log"
+        printf 'DIRECTED configuration MAX_BYTES=2048 AES_LOW_AREA=%s AES_INTEGRITY_TIMING_OPT=%s\nPASS directed waveform cases: mock\nPASS 20 packet vectors (MAX_BYTES=2048), mock\n' "$variant" "$timing" > "$log"
         ;;
     aes)
         [ "$top" = tb_aes_random ] && [ -n "$limit" ] && [ -n "$fsdb" ]
         if [ "$variant" = 1 ]; then cycles=50; else cycles=5; fi
-        printf 'PASS %s AES blocks, %s-cycle latency/II, mock\n' "$limit" "$cycles" > "$log"
+        printf 'AES configuration AES_LOW_AREA=%s BALANCED_TIMING_OPT=%s\nPASS %s AES blocks, %s-cycle latency/II, mock\n' "$variant" "$timing" "$limit" "$cycles" > "$log"
         ;;
 esac
-if [ "${MOCK_BAD_LOG:-}" = "$kind" ]; then printf 'mock failure, no PASS\n' > "$log"; fi
+if [ "${MOCK_BAD_LOG:-}" = "$kind" ]; then
+    if [ "$kind" = aes ]; then
+        printf 'AES configuration AES_LOW_AREA=%s BALANCED_TIMING_OPT=%s\nmock failure, no PASS\n' "$variant" "$timing" > "$log"
+    else
+        printf 'mock failure, no PASS\n' > "$log"
+    fi
+fi
 if [ -n "$fsdb" ] && [ "${MOCK_MISSING_WAVE:-0}" != 1 ] && [ "${MOCK_MISSING_WAVE:-0}" != "$kind" ]; then
     printf 'MOCK OUTPUT: NOT A REAL FSDB\n' > "$fsdb"
 fi
@@ -160,9 +174,9 @@ class UNetworkFlowTests(unittest.TestCase):
         self.env = os.environ.copy()
         for key in ("VCS", "VCS_HOME", "VERDI_HOME", "NOVAS_HOME", "VERDI_PLI_DIR",
                     "VERDI_TAB", "VERDI_PLI", "BSUB_CMD", "RUN_ROOT", "AES_LOW_AREA",
-                    "RUN_FULL", "RUN_AES", "AES_BLOCKS", "FSDB_FULL", "FSDB_MDA", "VCS_EXTRA_FLAGS",
+                    "AES_INTEGRITY_TIMING_OPT", "RUN_FULL", "RUN_AES", "AES_BLOCKS", "FSDB_FULL", "FSDB_MDA", "VCS_EXTRA_FLAGS",
                     "MOCK_COMPILE_FAIL", "MOCK_RUN_FAIL", "MOCK_BAD_LOG",
-                    "MOCK_WRONG_VARIANT", "MOCK_MISSING_WAVE"):
+                    "MOCK_WRONG_VARIANT", "MOCK_WRONG_TIMING", "MOCK_MISSING_WAVE"):
             self.env.pop(key, None)
         self.env.update(VCS=str(self.vcs), VERDI_HOME=str(self.verdi_home), BSUB_CMD="")
 
@@ -348,7 +362,8 @@ class UNetworkFlowTests(unittest.TestCase):
     def test_balanced_variant_is_packaged_and_selected(self):
         result = self.run_script(updates={"AES_LOW_AREA": "2", "RUN_FULL": "0", "AES_BLOCKS": "8"})
         run = self.run_dir(result)
-        for name in ("mdm_aes128_balanced.v", "mdm_aes_balanced_blocks.v", "mdm_aes_mix_balanced.vh"):
+        for name in ("mdm_aes128_balanced.v", "mdm_aes128_balanced_timing.v",
+                     "mdm_aes_balanced_blocks.v", "mdm_aes_mix_balanced.vh"):
             packaged = self.design / "vc" / name
             self.assertTrue(packaged.is_file())
             self.assertEqual(packaged.read_bytes(), (ROOT / "rtl" / name).read_bytes())
@@ -356,8 +371,33 @@ class UNetworkFlowTests(unittest.TestCase):
                       (run / "tb/compile_args.txt").read_text().splitlines())
         self.assertIn("-pvalue+tb_aes_random.TEST_AES_LOW_AREA=2",
                       (run / "aes/compile_args.txt").read_text().splitlines())
+        self.assertIn("-pvalue+tb_mdm_sec.TEST_AES_INTEGRITY_TIMING_OPT=1",
+                      (run / "tb/compile_args.txt").read_text().splitlines())
+        self.assertIn("-pvalue+tb_aes_random.TEST_BALANCED_TIMING_OPT=1",
+                      (run / "aes/compile_args.txt").read_text().splitlines())
+        self.assertIn("AES_INTEGRITY_TIMING_OPT=1", (run / "tb/sim.log").read_text())
+        self.assertIn("AES configuration AES_LOW_AREA=2 BALANCED_TIMING_OPT=1",
+                      (run / "aes/sim.log").read_text())
         self.assertIn("PASS 8 AES blocks, 5-cycle latency/II", (run / "aes/sim.log").read_text())
         self.assertIn("NOT A REAL FSDB", (run / "aes/aes_waves.fsdb").read_text())
+
+    def test_balanced_integrity_timing_can_be_disabled_for_comparison(self):
+        result = self.run_script(updates={"AES_LOW_AREA": "2", "AES_INTEGRITY_TIMING_OPT": "0",
+                                          "RUN_FULL": "0", "AES_BLOCKS": "8"})
+        run = self.run_dir(result)
+        self.assertIn("-pvalue+tb_mdm_sec.TEST_AES_INTEGRITY_TIMING_OPT=0",
+                      (run / "tb/compile_args.txt").read_text().splitlines())
+        self.assertIn("-pvalue+tb_aes_random.TEST_BALANCED_TIMING_OPT=0",
+                      (run / "aes/compile_args.txt").read_text().splitlines())
+        self.assertIn("AES_INTEGRITY_TIMING_OPT=0", (run / "tb/sim.log").read_text())
+        self.assertIn("AES configuration AES_LOW_AREA=2 BALANCED_TIMING_OPT=0",
+                      (run / "aes/sim.log").read_text())
+        bad = self.run_script(updates={"AES_INTEGRITY_TIMING_OPT": "2"}, ok=False)
+        self.assertIn("AES_INTEGRITY_TIMING_OPT must be 0 or 1", bad.stdout)
+        mismatch = self.run_script(updates={"AES_LOW_AREA": "2", "MOCK_WRONG_TIMING": "wave"}, ok=False)
+        self.assertIn("Packet testbench parameter mismatch", mismatch.stdout)
+        mismatch = self.run_script(updates={"AES_LOW_AREA": "2", "MOCK_WRONG_TIMING": "aes"}, ok=False)
+        self.assertIn("AES testbench parameter mismatch", mismatch.stdout)
 
     def test_full_regression_fsdb_option_and_missing_wave(self):
         result = self.run_script(updates={"RUN_AES": "0", "FSDB_FULL": "1", "FSDB_MDA": "1"})

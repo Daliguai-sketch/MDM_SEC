@@ -40,7 +40,9 @@ Environment overrides:
                       an empty value means direct. If unset, bsub_cmd is used
                       when available, otherwise execution is direct.
   AES_LOW_AREA        1 (default, 50 cycles), 0 (fast, 5 cycles), or
-                      2 (area-optimized, 5 cycles)
+                      2 (balanced, 5 cycles)
+  AES_INTEGRITY_TIMING_OPT  1 (default) uses the integrity timing candidate
+                      when AES_LOW_AREA=2; 0 compares the original balanced design
   RUN_FULL            1 (default) runs 2641 packets; 0 skips that regression
   RUN_AES             1 (default) runs AES block test; 0 skips it
   AES_BLOCKS          AES block count for RUN_AES=1, 2..515 (default 8)
@@ -79,6 +81,7 @@ VECTORS="$TB_DIR/vectors"
 [[ -d $VC_DIR ]] || die "Expected vc/ and tb/ under $DESIGN_DIR"
 
 AES_LOW_AREA=${AES_LOW_AREA:-1}
+AES_INTEGRITY_TIMING_OPT=${AES_INTEGRITY_TIMING_OPT:-1}
 RUN_FULL=${RUN_FULL:-1}
 RUN_AES=${RUN_AES:-1}
 FSDB_FULL=${FSDB_FULL:-0}
@@ -86,7 +89,7 @@ FSDB_MDA=${FSDB_MDA:-0}
 AES_BLOCKS=${AES_BLOCKS:-8}
 [[ $AES_LOW_AREA == 0 || $AES_LOW_AREA == 1 || $AES_LOW_AREA == 2 ]] ||
     die 'AES_LOW_AREA must be 0, 1 or 2'
-for name in RUN_FULL RUN_AES FSDB_FULL FSDB_MDA; do
+for name in AES_INTEGRITY_TIMING_OPT RUN_FULL RUN_AES FSDB_FULL FSDB_MDA; do
     value=${!name}
     [[ $value == 0 || $value == 1 ]] || die "$name must be 0 or 1"
 done
@@ -215,6 +218,7 @@ run_job compile "$VCS_EXE" -full64 -sverilog -debug_access+all -kdb -lca +memcbk
     -P "$VERDI_TAB" "$VERDI_PLI" -top tb_mdm_sec \
     -pvalue+tb_mdm_sec.TEST_MAX_BYTES=2048 \
     "-pvalue+tb_mdm_sec.TEST_AES_LOW_AREA=$AES_LOW_AREA" \
+    "-pvalue+tb_mdm_sec.TEST_AES_INTEGRITY_TIMING_OPT=$AES_INTEGRITY_TIMING_OPT" \
     -f "$TB_DIR/filelist.f" -o simv -l compile.log
 [[ -x ./simv ]] || die 'VCS did not produce simv; inspect compile.log.'
 
@@ -240,7 +244,7 @@ fi
 run_job packet_wave ./simv "+VECTORS=$VECTORS/wave_vectors.txt" \
     +DIRECTED_COVERAGE +CASE_LOG "+FSDB=$RUN_DIR/tb/waves.fsdb" "${mda[@]}" \
     +fsdb+autoflush -no_save -l sim.log
-grep -Fq "DIRECTED configuration MAX_BYTES=2048 AES_LOW_AREA=$AES_LOW_AREA" sim.log ||
+grep -Fxq "DIRECTED configuration MAX_BYTES=2048 AES_LOW_AREA=$AES_LOW_AREA AES_INTEGRITY_TIMING_OPT=$AES_INTEGRITY_TIMING_OPT" sim.log ||
     die 'Packet testbench parameter mismatch; inspect sim.log.'
 grep -Fq 'PASS directed waveform cases:' sim.log || die 'Directed coverage failed; inspect sim.log.'
 grep -Fq 'PASS 20 packet vectors (MAX_BYTES=2048)' sim.log || die 'Wave cases failed; inspect sim.log.'
@@ -256,11 +260,14 @@ if [[ $RUN_AES == 1 ]]; then
         -timescale=1ns/1ps +define+MDM_SEC_FSDB "${extra_flags[@]}" \
         -P "$VERDI_TAB" "$VERDI_PLI" -top tb_aes_random \
         "-pvalue+tb_aes_random.TEST_AES_LOW_AREA=$AES_LOW_AREA" \
+        "-pvalue+tb_aes_random.TEST_BALANCED_TIMING_OPT=$AES_INTEGRITY_TIMING_OPT" \
         -f "$TB_DIR/filelist_aes.f" -o simv -l compile.log
     [[ -x ./simv ]] || die 'VCS did not produce AES simv; inspect aes/compile.log.'
     run_job aes_regression ./simv "+VECTORS=$VECTORS/aes_vectors.txt" \
         "+LIMIT=$AES_BLOCKS" +CASE_LOG "+FSDB=$RUN_DIR/aes/aes_waves.fsdb" \
         +fsdb+autoflush -no_save -l sim.log
+    grep -Fxq "AES configuration AES_LOW_AREA=$AES_LOW_AREA BALANCED_TIMING_OPT=$AES_INTEGRITY_TIMING_OPT" sim.log ||
+        die 'AES testbench parameter mismatch; inspect aes/sim.log.'
     grep -Fq "PASS $AES_BLOCKS AES blocks, $aes_cycles-cycle latency/II," sim.log ||
         die 'AES self-check/parameter mismatch; inspect aes/sim.log.'
     [[ -s aes_waves.fsdb ]] || die 'AES FSDB is missing or empty; inspect aes/sim.log.'
