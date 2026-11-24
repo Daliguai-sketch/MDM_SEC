@@ -1,0 +1,79 @@
+# 六模式 RTL 验证记录
+
+## 三种 AES 实现收敛后的验证
+
+环境为 Verilator 5.38、Yosys 0.71（YoWASP）、Python 3.11、PyCryptodome 3.24.1 和 Icarus WebAssembly 0.1.4。`AES_LOW_AREA=2` 的 cipher 和 integrity 均为独立 balanced-opt；原 balanced 已删除。目标工艺和约束未提供。
+
+- `make -j2 JOBS=1 test`：PASS。低面积 2641+240+12 包、fast 和双通道 balanced-opt 各 2641+12 包，合计 **8,199 个大规模包**及 20 个默认定向包。另含 lint、规格书、示例、原语、通道、缓存、波形冒烟及脚本测试。
+- `make test-aes`：serial、fast、balanced-opt 各 **515 块**，覆盖逐块变化的 key、最早连续启动、忙时请求及复位。AES 期望值逐块交叉检查 PyCryptodome；对应的块延迟/最小启动间隔为 **50/5/5 拍**。
+- `make test-aes-balanced-blocks`：518 个 Python 中间阶段向量、全部 256 个 Rcon，检查正常/末轮结果及两次密钥扩展；`test-primitives` 对照独立表穷举两个 S-box 的所有 256 个输入。
+- `make test-aes-formal`：balanced-opt 的 32 位 MixColumns 与独立矩阵、两个 8 位 S-box 的全输入 SAT 成功；fast 对 balanced-opt 整核 **784 个等价点全部证明**，未使用 blacklist。整核证明使用 `async2sync` 复位模型，不等于门级或任意异步复位签核。
+- `make test-aes-hierarchy`：非 flatten 综合后的 balanced-opt 有 32 个数据 S-box、8 个密钥 S-box、8 个列混合和独立末轮输出；顶层模式 2 展开确认 cipher 和 integrity 各有一个独立核。
+- `make test-retired-balanced`：Verilator 检查独立包装器、完整性通道和顶层。模式 2 的旧参数为 0 时明确拒绝；模式 0/1 的旧参数为 0 仍可使用。`make yosys-parameters` 同样拒绝已退役或越界配置；`make yosys-check CHECK_MAX_BYTES=2048 CHECK_AES_LOW_AREA=2` 报告 0 个结构问题。
+- `make wave WAVE_AES_LOW_AREA=2`：20 个定向包和 8 个 AES 块通过，两份 VCD 的核心活动和关键事件检查通过；不是 FSDB 测试。
+- 新转网包从当前 RTL 和向量生成：包内两级 filelist 经 Verilator 实际展开通过。Icarus 四态仿真读取包内 RTL 和向量，在 testbench **内存副本**设模式 2，8 个 AES 块和 20 个顶层六模式定向包通过（含两通道并发）；独立测试也确认旧模式 2 配置在 Icarus 展开时被拒绝。`make test-u-network` 的 19 项及 `make test-vcs-flow` 的 9 项为模拟 VCS 的脚本测试，不是实际 VCS/Verdi 或 FSDB 验证。
+- `make area-aes-balanced` / `make area-aes-timing`：Yosys 0.71 单核 serial / fast / balanced-opt 为 **2,179 / 7,321 / 7,097** 个通用单元；fast / balanced-opt 最长未加权拓扑 70 / 67 级，任意状态反馈最深 70 / 66 级。无目标库、布线或延时权重，不能推算面积、节省的 ps 或证明 375 MHz 收敛。保层面积与正常优化 PPA 应分别评估，见 [aes_balanced_hierarchy.md](aes_balanced_hierarchy.md)。
+
+用户反馈现场将 cipher 选为 balanced-opt 后综合无违例且回归通过，但现场副本、约束及报告不在仓库；这不是对当前提交的工艺签核。真实 VCS/Verdi PLI、原生 FSDB、目标库多角 setup/hold 和布线后 STA 仍需现场确认。
+
+## 历史：balanced AES 层次化后的补充回归（时序候选之前）
+
+以下为删除原 balanced **之前**的历史结果，不能将当时的模式 2、实例路径或命令当作当前配置。以分层后的 RTL、Verilator 5.49、Yosys 0.64（YoWASP）、Python 3.11 和 PyCryptodome 重新验证：
+
+- `make -j2 test`：PASS，三种 AES 各 515 块；balanced 的两路通道、2641 个默认容量包、12 个最大容量包及全部回归通过。
+- `make test-aes-balanced-blocks`：PASS，518 个 Python 模型中间状态向量，检查所有 256 个 Rcon 值、普通轮和末轮旁路及两次密钥扩展；包含 FIPS-197 中间状态与轮密钥固定答案。
+- `make test-aes-hierarchy`：PASS，Yosys 非 flatten 综合后单核保留 2 轮、2 级密钥扩展、40 个 S-box、8 个列混合及 3 个 AddRoundKey；`MAX_BYTES=16` 的顶层展开确认 cipher / integrity 两路独立选择 balanced。当前 balanced-opt 的层次与单元数另见 [aes_balanced_hierarchy.md](aes_balanced_hierarchy.md)。
+- `make test-aes-formal`：PASS，实例化列混合模块的全输入 SAT 和原高速核/分层 balanced 核 912 个等价点；异步复位采用下述 `async2sync` 模型。
+- `make area-aes-balanced`：PASS，相同 Yosys 0.64 `-noabc` 口径仍为原高速 7,321、分层 balanced 6,937 个通用单元，最长未加权路径 70/68。`make yosys-check CHECK_MAX_BYTES=2048 CHECK_AES_LOW_AREA=2` 和 `make synth-generic SYNTH_MAX_BYTES=2048 SYNTH_AES_LOW_AREA=2` 通过，后者为 117,163 个通用单元（含通用逻辑实现的包缓存）；当时两路均为已删除的原 balanced，当前 RTL 不再支持重现此配置。这些都不是目标工艺面积或 STA。
+- `make wave WAVE_AES_LOW_AREA=2`：PASS，balanced 的 20 个定向包、8 个 AES 块及两份 VCD 活动检查通过。
+- 新转网包中 23 个源文件逐字节与工作区一致。使用包内两级 filelist 和 Verilator，balanced 配置通过 515 个 AES 块、2641 个完整包和 20 个定向包；`make test-u-network` 的 18 项脚本检查为模拟 VCS，并非真实 FSDB 验证。
+- Icarus WebAssembly 0.1.4 四态冒烟：分层子模块 518 向量、balanced AES 8 块、双通道 20 个定向包通过；测试参数在测试平台副本内存中设为 2。未运行真实 VCS、Verdi PLI、FSDB、`rc_flow` 或目标工艺综合。
+
+## 历史：既有六模式回归记录
+
+以下为删除原 balanced 之前共享原地缓存和可选低面积/原高速/5 拍优化 AES 的历史回归；当时的优化版不是当前 balanced-opt。环境：Verilator 5.38、Yosys 0.64（YoWASP）、Python 3.11、PyCryptodome 3.23。命令从仓库根目录执行；`build/` 是生成目录。
+
+| 命令 | 结果 |
+|---|---|
+| `make test -j 2` | PASS：三个 AES 配置的 Verilog-2005 lint、编码和规格书检查、原语、通道、缓存、示例和端到端回归 |
+| `make test-aes` | PASS：三种配置各 515 个 AES 块，逐块与参考模型比较，并逐块独立交叉检查 PyCryptodome；检查 50/5/5 拍延迟、最早连续启动、busy 时无效请求、输入变化和中途复位 |
+| `make test-balanced` | PASS：新 5 拍核的原语、两通道、2641 个默认容量包和 12 个最大容量包；覆盖并行、依赖、背压及回绕 |
+| `make test-aes-formal` | PASS：MixColumns 全输入 SAT 及优化核相对原高速核的 912 个 Yosys 等价点；异步复位使用 `async2sync` 模型 |
+| `make area-aes-balanced` | PASS：单核 Yosys 0.64 `-noabc` 原高速 7,321、优化 6,937 个通用单元（−5.25%），未加权最长拓扑路径 70/68 层；不是目标工艺面积/STA |
+| `make test-buffer` | PASS：1、64、259、65536 字节及单双读口配置；非对齐 1～16 字节写、独立读、同拍写前旧值/写后新值，以及完整 16 位地址回绕 |
+| `make test-packet` | PASS：低面积 AES、`MAX_BYTES=2048`，2641 个包；模式 2/3/4/5 各 12 种非空完整性算法组合实际发生同拍传输 |
+| `make test-tiny` / `make test-boundaries` | PASS：低面积 AES、最小容量 240 个包，最大容量 12 个包；包括模式 2 的 MAC 追加跨 `ffff→0000` |
+| `make test-fast` | PASS：高速 AES 的原语、通道、2641 个默认容量包和 12 个最大容量包；同样覆盖模式 2–5 的 12 种并发组合和最大地址回绕 |
+| `make test-directed`，以及 `make test-directed WAVE_AES_LOW_AREA=0` | PASS：低面积和原高速配置各 20 个定向包，覆盖六种模式、认证成功/失败、MAC/明密文依赖等待、原地覆盖保护和同沿读旧值；优化版见下方波形回归 |
+| `make wave` 及 `make wave WAVE_AES_LOW_AREA=0/2`（分别运行） | PASS：三种配置分别生成包和 AES VCD；自检并检查 VCD 内部时间、信号、模式 5 成功/失败事件和 AES 固定答案，见 [waveforms.md](waveforms.md) |
+| `make test-vcs-flow` | PASS：使用模拟工具检查 VCS/Verdi 命令参数、PLI 路径、配置选择和失败处理；**不生成或验证真正的 FSDB** |
+| `make test-u-network` | PASS：17 项 `run.sh` 转网包与离线流程检查，包括新核选择、PATH 无 Python/Make 的脚本模拟、缺失/空文件、重复运行、同步/异步调度和失败处理；VCS/Verdi 为模拟工具，不验证真正的 FSDB，也不代表 VCS 自身无 Make 依赖 |
+| `make example` | PASS：模式 4 AES-CTR/AES-CMAC 命令、输入、响应和输出握手；MAC 和密文另与 PyCryptodome 核对 |
+| `make yosys-check`、`make yosys-check CHECK_MAX_BYTES=65535` | PASS：低面积配置，默认与最大参数的 Verilog 前端、层次展开、优化及 `check -assert` 报告 0 问题；最大容量只检查结构，不将其全部映射成触发器 |
+| `make yosys-check CHECK_MAX_BYTES=65535 CHECK_AES_LOW_AREA=0` | PASS：高速配置、最大容量层次和结构检查 0 问题 |
+| `make yosys-parameters` | PASS：`MAX_BYTES=0/65536`、`AES_LOW_AREA=3/4`、缓存容量 `0/65537` 和读口数 `0/3` 在 Yosys 展开时由参数检查拒绝 |
+| `make area-compare` | PASS：同一 Yosys 配置重现优化前后单 AES、单/双缓冲及默认 2048 字节顶层对比，全部 `check -assert` 为 0 问题；详见 [area_optimization.md](area_optimization.md) |
+
+`make test` 的大规模包回归合计 8,199 次：低面积版 2641 + 240 + 12，原高速版和新优化版各 2641 + 12；另默认运行 20 个低面积定向包，原高速和新优化版的 20 个定向包也分别通过波形回归。六种模式覆盖 4×4 算法组合、128 位 A/B 字节对齐、空段、响应和输出背压以及复位。模式 2–5 的所有合法向量均检查两条通道恰好一次、同拍启动。每种模式的定向长包覆盖 4 种加密算法（包括 EEA0）× 3 种非空完整性算法，确认每种组合至少有一拍两条通道实际同时传输。
+
+波形定向包中，低面积/高速配置的用例 7 分别有 210/30 拍原文等待和 53/8 拍 MAC 等待，均有 9 次同沿读旧值；用例 8 和 18 分别有 1398/3 拍结果依赖等待。用例 11/12 分别认证成功/失败。所有这些结果均由 testbench 自检，具体观察方法见 [waveforms.md](waveforms.md)。
+
+在大规模包回归定向覆盖中，模式 2/3/5 分别有 10/3/3 个用例实际遇到原有 MAC/结果依赖等待；原高速及新优化版均分别为 10/5/5。对于模式 2/4，三个配置下各 12 个定向组合都覆盖了原地覆盖保护等待，也覆盖了同拍读取原始字节并写回的情况。测试逐拍检查不可在完整性读取之前覆盖原文，模式 2 不提前加密附加 MAC，模式 3/5 不读取此前未提交的结果字节，且通道输入停顿时保持稳定。每种双通道模式均在实际并发传输后复位，并继续处理后续包。
+
+模式 5 包含模式 2→5 同参数往返、解密后的四个验证码字节分别篡改、A 和密文载荷篡改、正确与错误验证码、跨 32/128 位边界、仅 4 字节验证码、`B<4` 拒绝、提取后复位、跨命令清除、背压以及最大 65535 字节输入。测试逐项比较提取值、计算的 MAC、相等标志、长度和所有输出 beat；最大长度同时检查 AES 末块启动数和 16 位字节计数不回绕。正常和最大长度的 AES-CTR/CMAC 参考结果均额外用 PyCryptodome 核对。
+
+AES 固定答案采用 FIPS-197：`000102...0f` 密钥、`001122...ff` 输入、`69c4e0d86a7b0430d8cdb78070b4c55a` 输出；原语测试还覆盖全部 256 个新旧 S-box 值，以及 SNOW 3G、ZUC 已知答案。使用 `python3 -S` 对 AES、默认包、最小容量包、最大容量包和波形定向包的向量生成器重新生成，均与启用 PyCryptodome 的结果逐字节一致。没有 PyCryptodome 时仍会跑参考模型和固定答案，但会跳过其独立交叉检查。
+
+新增 VCS/Verdi FSDB 接口时，使用四态 Icarus 仿真器（WebAssembly 版本）分别运行了低面积和高速配置的 20 个包定向用例、各 8 个 AES 块，均通过；启用 FSDB 宏的两个 bench 也完成了 HDL 编译检查。
+
+将 U 网入口改为 `run.sh` 后，在外网生成并打包 2641 个包级向量、20 个定向包和 515 个 AES 向量，PyCryptodome 独立 AES 检查通过。解压新包后，使用包内两级 filelist 和 Verilator 分别编译低面积/高速 RTL：两种配置各通过 2641 包、20 个定向包和 515 个 AES 块；包级及 AES 的 VCD 事件检查均通过。Icarus WebAssembly 另对包内低面积、2048 字节配置通过 20 个定向包和 8 个 AES 块，启用 FSDB 宏时两个 bench 通过 HDL 编译（未执行 PLI）。已编译的两组 Verilator 包级和 AES 仿真程序在 PATH 不含 Python/Make 时也通过。`make test-u-network` 另用纯 shell 模拟 VCS，检查脚本在 PATH 无 Python/Make 时的参数、必要文件检查、失败及防旧结果复用。**模拟 VCS、Verilator 和 Icarus 不能验证真实 VCS/PLI 或 FSDB，也不能证明现场 VCS 自身无 Make 依赖**。
+
+加入 5 拍优化核后重新打包，并用包内两级 filelist 在 Verilator 上选择 `AES_LOW_AREA=2`：2641 包、20 个定向包和 515 个 AES 块均通过；包级和 AES 波形 VCD 事件检查通过。包内 RTL、头文件、脚本、testbench 和说明与本次源码逐文件一致。另用 Icarus WebAssembly 0.1.4，将包内 testbench 的测试参数在内存中改为 2，四态仿真通过 20 个定向包和 8 个 AES 块；启用 FSDB 宏时两个 bench 只做了 HDL 编译，没有执行 PLI。上述测试均不等于真实 U 网 VCS/PLI。
+
+本次环境没有 VCS、Verdi 及其授权，也无法访问 U 网的 `/design/tb/`，尚未实际链接 Verdi PLI、生成或打开原生 FSDB；请在 U 网按 [u_network_test.md](u_network_test.md) 运行验证。同机开发流程见 [synopsys_fsdb.md](synopsys_fsdb.md)。
+
+AES 整核等价证明使用 Yosys `async2sync`：该模型假设异步信号对时钟同步，并对异步触发器输入采用负保持时间假设；它不是对任意异步复位释放波形的无条件证明，仍需复位同步与目标工艺时序验证。
+
+综合结果为通用逻辑/触发器单元数量，不是标准单元面积、SRAM 实际面积、最大频率或签核结果。使用何种 SRAM、端口和读写碰撞语义会显著改变实现；见 [area_optimization.md](area_optimization.md)。
+
+`rsp_mac_match` 只是两个 32 位值的比较，错误时模块仍输出解密数据；EIA0 不提供完整性保护。系统必须自行丢弃未认证数据并完成协议和安全处理。已知向量来源及接口限制见 [rtl_interface.md](rtl_interface.md)。
