@@ -1,10 +1,11 @@
-// Selectable AES-128 implementation. AES_LOW_AREA is a historical parameter
-// name: 1 selects the default 50-cycle serial core, 0 the original 5-cycle
-// core, and 2 a 5-cycle balanced core. BALANCED_TIMING_OPT selects the
-// timing-oriented version only for mode 2; the default retains the original.
+// Three selectable AES-128 implementations. AES_LOW_AREA is a historical
+// parameter name: 1 selects the default 50-cycle serial core, 0 the original
+// 5-cycle fast core, and 2 the 5-cycle balanced-opt core. The old balanced
+// core has been retired. BALANCED_TIMING_OPT is retained only as a migration
+// guard: mode 2 requires 1, while the parameter has no effect in modes 0/1.
 module mdm_aes128 #(
     parameter integer AES_LOW_AREA=1,
-    parameter integer BALANCED_TIMING_OPT=0
+    parameter integer BALANCED_TIMING_OPT=1
 ) (
     input  wire         clk,
     input  wire         rst_n,
@@ -29,18 +30,22 @@ module mdm_aes128 #(
                 $finish;
             end
         end
+        if (AES_LOW_AREA==2 && BALANCED_TIMING_OPT==0) begin: g_retired_balanced
+            // An unresolved module makes even synthesis-only elaboration fail,
+            // rather than silently accepting a removed legacy configuration.
+            MDM_ERROR_ORIGINAL_BALANCED_REMOVED_SET_BALANCED_TIMING_OPT_TO_1 u_invalid_configuration ();
+            initial begin
+                $display("ERROR: original balanced removed; set BALANCED_TIMING_OPT=1");
+                $finish;
+            end
+        end
         if (AES_LOW_AREA==1) begin: g_low_area
             mdm_aes128_serial u_core (
                 .clk(clk), .rst_n(rst_n), .start(start), .ready(ready),
                 .key(key), .block_in(block_in), .busy(busy), .done(done), .block_out(block_out)
             );
-        end else if (AES_LOW_AREA==2 && BALANCED_TIMING_OPT==1) begin: g_balanced_timing
+        end else if (AES_LOW_AREA==2) begin: g_balanced_timing
             mdm_aes128_balanced_timing u_core (
-                .clk(clk), .rst_n(rst_n), .start(start), .ready(ready),
-                .key(key), .block_in(block_in), .busy(busy), .done(done), .block_out(block_out)
-            );
-        end else if (AES_LOW_AREA==2) begin: g_balanced
-            mdm_aes128_balanced u_core (
                 .clk(clk), .rst_n(rst_n), .start(start), .ready(ready),
                 .key(key), .block_in(block_in), .busy(busy), .done(done), .block_out(block_out)
             );

@@ -107,9 +107,9 @@ PyCryptodome 是可选依赖；存在时进一步独立检查 AES，缺少时仍
 
 ## 已有结果与本机需确认的结果
 
-- 已在 Verilator 上完成完整回归：大规模包用例 **10,852 次**（低面积 2641+240+12，原高速、完整性时序候选和回退各 2641+12），以及默认 20 个低面积定向包；原高速和候选配置的 20 个定向包也分别通过。
-- AES 完整回归四种实现各 **515 块**通过；原语延迟/最早启动间隔为低面积 **50 拍**、原高速及两种 balanced 均 **5 拍**，并非整包延迟。
-- 四态 Icarus WebAssembly 仿真在 U 网包内 RTL/testbench 的内存副本上选择 `AES_LOW_AREA=2`，完整性候选和回退各通过 20 个定向包和 8 个 AES 块；此前低面积、原高速等配置也曾通过。FSDB 宏仅做 HDL 编译，不执行 PLI。
+- 三种实现的 Verilator 完整回归包括大规模包用例 **8,199 次**（低面积 2641+240+12，原高速和双通道 balanced-opt 各 2641+12），以及默认 20 个低面积定向包。
+- AES 完整回归三种实现各 **515 块**通过；原语延迟/最早启动间隔为低面积 **50 拍**、原高速及 balanced-opt 均 **5 拍**，并非整包延迟。
+- 当前转网包 RTL 的 Icarus WebAssembly 四态冒烟：testbench 的内存副本选模式 2，8 个 AES 块及 20 个顶层六模式定向包通过（含两通道并发）；未执行 VCS/Verdi PLI 或生成真实 FSDB。
 - 当前执行环境没有 VCS/Verdi，**没有在这里实测真实 VCS 编译或生成真实 FSDB**。前述结果不能代替您本机 Synopsys 工具的验证。
 
 本机 `make fsdb` 正常完成后，整包 `sim.log` 应出现 `DIRECTED configuration MAX_BYTES=512 AES_LOW_AREA=1`、`PASS directed waveform cases` 和 `PASS 20 packet vectors`；AES `sim.log` 应出现 `PASS 8 AES blocks, 50-cycle latency/II`。Make 检查自检日志和 FSDB 非空，但不解析 FSDB 中每个事件；请用 Verdi 实际查看，或参考 [synopsys_fsdb.md](synopsys_fsdb.md) 的 `fsdb2vcd` 检查方法。

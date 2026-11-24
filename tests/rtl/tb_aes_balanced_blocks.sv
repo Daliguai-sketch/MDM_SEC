@@ -1,22 +1,21 @@
 `timescale 1ns/1ps
-// Compare every balanced datapath stage with vectors from the Python AES
-// model, including all Rcon bytes and both ordinary/final-round selections.
+// Compare every balanced-opt datapath stage with independent Python AES
+// vectors, including all Rcon bytes and both ordinary/final-round outputs.
 module tb_aes_balanced_blocks;
     reg [127:0] state_in, key_in;
     reg [7:0] rcon, rcon2;
     reg last_round;
     wire [127:0] sub, shifted, mixed, added, initial_state;
-    wire [127:0] key1, key2, round_normal, round_selected, timing_normal, timing_last;
-    wire [127:0] timing_mixed;
+    wire [127:0] key1, key2, round_normal, disabled_last, timing_normal, timing_last;
     reg [127:0] expected_sub, expected_shifted, expected_mixed;
     reg [127:0] expected_normal, expected_last, expected_key1, expected_key2;
     reg [255:0] seen_rcon=0;
     integer fd, rc, count=0, ordinary=0, last=0;
     string vector_path;
 
-    mdm_aes_balanced_subbytes u_subbytes (.state_in(state_in), .state_out(sub));
+    mdm_aes_balanced_subbytes_timing u_subbytes (.state_in(state_in), .state_out(sub));
     mdm_aes_shift_rows u_shift_rows (.state_in(sub), .state_out(shifted));
-    mdm_aes_balanced_mix_columns u_mix_columns (.state_in(shifted), .state_out(mixed));
+    mdm_aes_balanced_mix_columns_timing u_mix_columns (.state_in(shifted), .state_out(mixed));
     mdm_aes_balanced_add_round_key u_add_round_key (
         .state_in(mixed), .round_key(key1), .state_out(added)
     );
@@ -29,16 +28,10 @@ module tb_aes_balanced_blocks;
     mdm_aes_balanced_key_expand2 u_key_expand2 (
         .key_in(key_in), .key1(key1), .rcon(rcon2), .key_out(key2)
     );
-    // Even with last_round tied high, the first-round specialization must
-    // always mix. The second specialization must obey the bypass input.
-    mdm_aes_balanced_round #(.MAY_SKIP_MIX(0)) u_round_normal (
-        .state_in(state_in), .round_key(key1), .last_round(1'b1), .state_out(round_normal)
-    );
-    mdm_aes_balanced_round #(.MAY_SKIP_MIX(1)) u_round_selected (
-        .state_in(state_in), .round_key(key1), .last_round(last_round), .state_out(round_selected)
-    );
-    mdm_aes_balanced_mix_columns_timing u_timing_mix (
-        .state_in(shifted), .state_out(timing_mixed)
+    // The first round has no last-round output; the second produces the
+    // ordinary feedback and bypassed last-round result concurrently.
+    mdm_aes_balanced_round_timing #(.WITH_LAST_OUTPUT(0)) u_round_normal (
+        .state_in(state_in), .round_key(key1), .normal_out(round_normal), .last_out(disabled_last)
     );
     mdm_aes_balanced_round_timing #(.WITH_LAST_OUTPUT(1)) u_timing_round (
         .state_in(state_in), .round_key(key1), .normal_out(timing_normal), .last_out(timing_last)
@@ -60,12 +53,10 @@ module tb_aes_balanced_blocks;
             if (initial_state!==(state_in ^ key_in)) $fatal(1,"initial AddRoundKey mismatch at %0d",count);
             if (key1!==expected_key1) $fatal(1,"first expanded key mismatch at vector %0d",count);
             if (key2!==expected_key2) $fatal(1,"second expanded key mismatch at vector %0d",count);
-            if (added!==expected_normal || round_normal!==expected_normal)
-                $fatal(1,"normal round mismatch at vector %0d",count);
-            if (round_selected!==(last_round ? expected_last : expected_normal))
-                $fatal(1,"final-round bypass mismatch at vector %0d",count);
-            if (timing_mixed!==expected_mixed || timing_normal!==expected_normal || timing_last!==expected_last)
-                $fatal(1,"timing-oriented mix/normal/final mismatch at vector %0d",count);
+            if (added!==expected_normal || round_normal!==expected_normal || disabled_last!==128'b0)
+                $fatal(1,"first normal round mismatch at vector %0d",count);
+            if (timing_normal!==expected_normal || timing_last!==expected_last)
+                $fatal(1,"normal/final round mismatch at vector %0d",count);
             seen_rcon[rcon]=1'b1;
             if (last_round) last=last+1;
             else ordinary=ordinary+1;

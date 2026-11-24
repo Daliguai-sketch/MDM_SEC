@@ -39,10 +39,10 @@ Environment overrides:
   BSUB_CMD            Blocking launcher and options, e.g. 'bsub -K -q QUEUE';
                       an empty value means direct. If unset, bsub_cmd is used
                       when available, otherwise execution is direct.
-  AES_LOW_AREA        1 (default, 50 cycles), 0 (fast, 5 cycles), or
-                      2 (balanced, 5 cycles)
-  AES_INTEGRITY_TIMING_OPT  1 (default) uses the integrity timing candidate
-                      when AES_LOW_AREA=2; 0 compares the original balanced design
+  AES_LOW_AREA        1 (default, serial, 50 cycles), 0 (fast, 5 cycles), or
+                      2 (balanced-opt in both lanes, 5 cycles)
+  AES_INTEGRITY_TIMING_OPT  Legacy guard: mode 2 requires 1 (default); 0
+                      is rejected because the original balanced core was removed
   RUN_FULL            1 (default) runs 2641 packets; 0 skips that regression
   RUN_AES             1 (default) runs AES block test; 0 skips it
   AES_BLOCKS          AES block count for RUN_AES=1, 2..515 (default 8)
@@ -93,6 +93,8 @@ for name in AES_INTEGRITY_TIMING_OPT RUN_FULL RUN_AES FSDB_FULL FSDB_MDA; do
     value=${!name}
     [[ $value == 0 || $value == 1 ]] || die "$name must be 0 or 1"
 done
+[[ $AES_LOW_AREA != 2 || $AES_INTEGRITY_TIMING_OPT == 1 ]] ||
+    die 'Original balanced retired: AES_LOW_AREA=2 requires AES_INTEGRITY_TIMING_OPT=1'
 [[ $RUN_FULL == 1 || $FSDB_FULL == 0 ]] || die 'FSDB_FULL=1 requires RUN_FULL=1'
 [[ $AES_BLOCKS =~ ^[0-9]{1,3}$ ]] || die 'AES_BLOCKS must be 2..515'
 AES_BLOCKS=$((10#$AES_BLOCKS))
@@ -109,7 +111,6 @@ require_file "$TB_DIR/tb_mdm_sec.sv"
 require_file "$VC_DIR/mdm_sec_rtl.vc"
 require_file "$VC_DIR/mdm_sboxes.vh"
 require_file "$VC_DIR/mdm_aes_sbox.vh"
-require_file "$VC_DIR/mdm_aes_mix_balanced.vh"
 while IFS= read -r rtl_path || [[ -n $rtl_path ]]; do
     case $rtl_path in
         ../vc/*.v) require_file "$VC_DIR/${rtl_path#../vc/}" ;;

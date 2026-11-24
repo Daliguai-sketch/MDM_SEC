@@ -80,7 +80,7 @@ mdm_sec #(.MAX_BYTES(2048), .AES_LOW_AREA(1)) u_mdm_sec (
 | `cipher_keep`, `cipher_last` | 输出 | 16 位有效字节掩码、末 beat 标志 |
 | `rsp_rx_mac`, `rsp_rx_mac_valid`, `rsp_mac_match` | 输出 | 模式 5 的接收验证码（32 位）、有效及比较结果 |
 
-`MAX_BYTES` 限制输入 `A+B` 的总字节数，默认 2048，合法范围为 1–65535。`AES_LOW_AREA=1` 是默认低面积 AES，单块延迟/启动间隔 50 拍；0 选择原 5 拍 AES，2 选择 5 拍 balanced AES。`AES_LOW_AREA=2` 时默认仅完整性通道使用 5 拍时序候选；顶层 `AES_INTEGRITY_TIMING_OPT=0` 可回退到原 balanced，不影响 cipher。原地缓冲可能带来额外等待，因此即使选择高速 AES，整包时序也不一定与旧版相同。128 位密钥按高字节在前填写，通信两端需使用匹配的密钥和协议参数。`cmd_direction` 是协议中的 DIRECTION 位，不是加密/解密选择信号。EEA 算法的 XOR 变换用于加密和解密。
+`MAX_BYTES` 限制输入 `A+B` 的总字节数，默认 2048，合法范围为 1–65535。`AES_LOW_AREA=1` 是默认低面积 AES，单块延迟/启动间隔 50 拍；0 选择原 5 拍 AES，2 选择 5 拍 balanced AES。`AES_LOW_AREA=2` 时 cipher 和 integrity 各有一个独立的 5 拍 balanced-opt 核。旧顶层参数 `AES_INTEGRITY_TIMING_OPT` 必须为 1（默认）；模式 2 显式设为 0 会拒绝展开，不能回退已删除的原 balanced。原地缓冲可能带来额外等待，因此即使选择高速 AES，整包时序也不一定与旧版相同。128 位密钥按高字节在前填写，通信两端需使用匹配的密钥和协议参数。`cmd_direction` 是协议中的 DIRECTION 位，不是加密/解密选择信号。EEA 算法的 XOR 变换用于加密和解密。
 
 ## 3. 选择模式与算法
 

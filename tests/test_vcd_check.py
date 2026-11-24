@@ -101,16 +101,16 @@ class PacketVcdCheckTests(unittest.TestCase):
                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     def test_each_aes_variant_in_both_lanes(self):
-        for variant in ("g_low_area", "g_fast", "g_balanced"):
+        for variant in ("g_low_area", "g_fast", "g_balanced_timing"):
             with self.subTest(variant=variant):
                 result = self.run_check(packet_vcd(variant, variant))
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertIn("PASS packet VCD", result.stdout)
 
-    def test_balanced_integrity_timing_trace(self):
+    def test_retired_balanced_trace_is_rejected(self):
         result = self.run_check(packet_vcd("g_balanced", "g_balanced_timing"))
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("PASS packet VCD", result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AES u_core internals missing", result.stdout)
 
     def test_old_shallow_trace_is_rejected(self):
         result = self.run_check(packet_vcd(None, None))
@@ -124,7 +124,7 @@ class PacketVcdCheckTests(unittest.TestCase):
         self.assertIn("dut.u_integrity.u_aes", result.stdout)
 
     def test_mismatched_lane_variants_are_rejected(self):
-        result = self.run_check(packet_vcd("g_fast", "g_balanced"))
+        result = self.run_check(packet_vcd("g_fast", "g_balanced_timing"))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("AES variants differ", result.stdout)
 

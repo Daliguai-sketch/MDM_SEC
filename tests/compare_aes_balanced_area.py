@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare both 5-cycle AES implementations using the same Yosys flow.
+"""Compare all three AES implementations using the same Yosys flow.
 
 Pre-ABC generic cells and unweighted topological path length are not physical
 area, gate equivalents or timing. Full logs are retained under --output;
@@ -14,7 +14,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 AES_RTL = (
     "rtl/mdm_aes_sbox.v", "rtl/mdm_aes_blocks.v", "rtl/mdm_aes_balanced_blocks.v",
-    "rtl/mdm_aes128_serial.v", "rtl/mdm_aes128_fast.v", "rtl/mdm_aes128_balanced.v",
+    "rtl/mdm_aes128_serial.v", "rtl/mdm_aes128_fast.v",
     "rtl/mdm_aes128_balanced_timing.v", "rtl/mdm_aes128.v",
 )
 
@@ -45,15 +45,18 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     version = subprocess.check_output([args.yosys, "-V"], text=True).strip()
+    serial, serial_path = synth(args.yosys, output, "serial", 1)
     fast, fast_path = synth(args.yosys, output, "fast", 0)
     balanced, balanced_path = synth(args.yosys, output, "balanced", 2)
     summary = (f"{version}\n"
                "Method: synth -noabc; check -assert; stat; flatten; ltp -noff.\n"
                "Generic cells/path length, not physical area or STA.\n"
+               f"Serial 50-cycle AES:       {serial:,}\n"
                f"Original 5-cycle fast AES: {fast:,}\n"
-               f"Optimized 5-cycle AES:     {balanced:,}\n"
-               f"Difference: {balanced-fast:+,} ({(balanced-fast)*100/fast:+.2f}%)\n"
-               f"Unweighted longest topological path: {fast_path} -> {balanced_path}\n"
+               f"Balanced-opt 5-cycle AES:  {balanced:,}\n"
+               f"Fast to balanced-opt: {balanced-fast:+,} ({(balanced-fast)*100/fast:+.2f}%)\n"
+               f"Unweighted longest topological path (serial/fast/opt): "
+               f"{serial_path} / {fast_path} / {balanced_path}\n"
                f"Full logs: {output}\n")
     (output / "summary.txt").write_text(summary, encoding="utf-8")
     print(summary, end="")

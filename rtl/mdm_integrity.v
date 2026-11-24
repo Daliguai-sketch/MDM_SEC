@@ -58,8 +58,8 @@ module mdm_integrity #(
     wire aes_ready,aes_busy,aes_done;
     wire [127:0] aes_out;
     wire [127:0] aes_block_in = (state==AES_L_REQ) ? 128'b0 : aes_input;
-    // The timing option only changes AES_LOW_AREA=2; cipher keeps its own
-    // original AES instance. Both balanced implementations are 5 cycles.
+    // Both independent lanes select balanced-opt for AES_LOW_AREA=2.
+    // BALANCED_TIMING_OPT is a legacy guard; mode 2 rejects 0 (retired core).
     mdm_aes128 #(.AES_LOW_AREA(AES_LOW_AREA), .BALANCED_TIMING_OPT(BALANCED_TIMING_OPT)) u_aes (
         .clk(clk), .rst_n(rst_n), .start(aes_start), .ready(aes_ready),
         .key(key_q), .block_in(aes_block_in), .busy(aes_busy), .done(aes_done), .block_out(aes_out)

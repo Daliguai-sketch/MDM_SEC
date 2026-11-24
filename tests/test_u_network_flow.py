@@ -60,7 +60,7 @@ while IFS= read -r entry; do
         *) echo "bad RTL filelist entry: $entry" >&2; exit 19 ;;
     esac
 done < ../vc/mdm_sec_rtl.vc
-[ -r ../vc/mdm_sboxes.vh ] && [ -r ../vc/mdm_aes_sbox.vh ] && [ -r ../vc/mdm_aes_mix_balanced.vh ]
+[ -r ../vc/mdm_sboxes.vh ] && [ -r ../vc/mdm_aes_sbox.vh ]
 printf '%s\n' "$top" > mock_top
 printf '%s\n' "$variant" > mock_variant
 printf '%s\n' "$timing" > mock_timing
@@ -362,11 +362,12 @@ class UNetworkFlowTests(unittest.TestCase):
     def test_balanced_variant_is_packaged_and_selected(self):
         result = self.run_script(updates={"AES_LOW_AREA": "2", "RUN_FULL": "0", "AES_BLOCKS": "8"})
         run = self.run_dir(result)
-        for name in ("mdm_aes128_balanced.v", "mdm_aes128_balanced_timing.v",
-                     "mdm_aes_balanced_blocks.v", "mdm_aes_mix_balanced.vh"):
+        for name in ("mdm_aes128_balanced_timing.v", "mdm_aes_balanced_blocks.v"):
             packaged = self.design / "vc" / name
             self.assertTrue(packaged.is_file())
             self.assertEqual(packaged.read_bytes(), (ROOT / "rtl" / name).read_bytes())
+        for name in ("mdm_aes128_balanced.v", "mdm_aes_mix_balanced.vh"):
+            self.assertFalse((self.design / "vc" / name).exists())
         self.assertIn("-pvalue+tb_mdm_sec.TEST_AES_LOW_AREA=2",
                       (run / "tb/compile_args.txt").read_text().splitlines())
         self.assertIn("-pvalue+tb_aes_random.TEST_AES_LOW_AREA=2",
@@ -381,16 +382,14 @@ class UNetworkFlowTests(unittest.TestCase):
         self.assertIn("PASS 8 AES blocks, 5-cycle latency/II", (run / "aes/sim.log").read_text())
         self.assertIn("NOT A REAL FSDB", (run / "aes/aes_waves.fsdb").read_text())
 
-    def test_balanced_integrity_timing_can_be_disabled_for_comparison(self):
-        result = self.run_script(updates={"AES_LOW_AREA": "2", "AES_INTEGRITY_TIMING_OPT": "0",
+    def test_removed_balanced_is_rejected_and_legacy_fast_still_works(self):
+        bad = self.run_script(updates={"AES_LOW_AREA": "2", "AES_INTEGRITY_TIMING_OPT": "0"}, ok=False)
+        self.assertIn("Original balanced retired", bad.stdout)
+        self.assertFalse((self.tb / "runs").exists())
+        result = self.run_script(updates={"AES_LOW_AREA": "0", "AES_INTEGRITY_TIMING_OPT": "0",
                                           "RUN_FULL": "0", "AES_BLOCKS": "8"})
         run = self.run_dir(result)
-        self.assertIn("-pvalue+tb_mdm_sec.TEST_AES_INTEGRITY_TIMING_OPT=0",
-                      (run / "tb/compile_args.txt").read_text().splitlines())
-        self.assertIn("-pvalue+tb_aes_random.TEST_BALANCED_TIMING_OPT=0",
-                      (run / "aes/compile_args.txt").read_text().splitlines())
-        self.assertIn("AES_INTEGRITY_TIMING_OPT=0", (run / "tb/sim.log").read_text())
-        self.assertIn("AES configuration AES_LOW_AREA=2 BALANCED_TIMING_OPT=0",
+        self.assertIn("AES configuration AES_LOW_AREA=0 BALANCED_TIMING_OPT=0",
                       (run / "aes/sim.log").read_text())
         bad = self.run_script(updates={"AES_INTEGRITY_TIMING_OPT": "2"}, ok=False)
         self.assertIn("AES_INTEGRITY_TIMING_OPT must be 0 or 1", bad.stdout)
@@ -486,7 +485,7 @@ class UNetworkFlowTests(unittest.TestCase):
         for path in (self.tb / "vectors/packet_vectors.txt", self.tb / "vectors/wave_vectors.txt",
                      self.tb / "tb_aes_random.sv", self.design / "vc/mdm_sec.v",
                      self.design / "vc/mdm_aes_balanced_blocks.v", self.design / "vc/mdm_aes_sbox.vh",
-                     self.design / "vc/mdm_aes_mix_balanced.vh"):
+                     self.design / "vc/mdm_aes128_balanced_timing.v"):
             with self.subTest(path=path):
                 original = path.read_bytes()
                 path.unlink()

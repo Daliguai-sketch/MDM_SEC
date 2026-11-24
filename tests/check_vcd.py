@@ -37,7 +37,7 @@ def read_header(stream):
 def add_aes_core_checks(signals, wrapper, required, additional):
     """Require a traced, active implementation, not just wrapper ports."""
     variants = (("g_low_area", "round"), ("g_fast", "pair"),
-                ("g_balanced", "pair"), ("g_balanced_timing", "pair"))
+                ("g_balanced_timing", "pair"))
     found = [(name, f"{wrapper}.{name}.u_core") for name, counter in variants
              if f"{wrapper}.{name}.u_core.{counter}" in signals]
     if len(found) != 1:
@@ -90,7 +90,7 @@ def main():
         else:
             variants = [add_aes_core_checks(signals, f"{root}.dut.{lane}.u_aes", required, additional)
                         for lane in ("u_cipher", "u_integrity")]
-            if variants[0] != variants[1] and variants != ["g_balanced", "g_balanced_timing"]:
+            if variants[0] != variants[1]:
                 raise ValueError(f"AES variants differ between packet lanes: {variants}")
         missing = [name for name in (*required, *additional) if name not in signals]
         if missing:

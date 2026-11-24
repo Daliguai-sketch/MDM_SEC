@@ -22,14 +22,12 @@
  * SOFTWARE.
  */
 
-// Timing-oriented 5-cycle AES for the integrity lane.  The S-box equations
-// below are the SAME Boyar-Peralta circuit as mdm_aes_sbox.v (BearSSL,
-// Thomas Pornin, MIT license above), intentionally in one module so the
-// synthesis tool may optimize across its top/nonlinear/bottom boundaries.
-// The original hierarchical S-box and balanced AES remain unchanged for the
-// cipher lane. Exhaustive S-box and sequential core equivalence tests guard
-// the duplicated equations. This structure is a timing candidate, not a
-// guarantee of closure with a particular library, placement, or constraints.
+// Timing-oriented 5-cycle balanced-opt AES, used independently by either
+// security lane. The S-box equations below are the SAME Boyar-Peralta circuit
+// as mdm_aes_sbox.v (BearSSL, Thomas Pornin, MIT license above), intentionally
+// in one module so synthesis may optimize across its internal boundaries.
+// Exhaustive S-box and sequential core equivalence tests guard the duplicated
+// equations. Target-library, placement and constraint sign-off is still needed.
 module mdm_aes_sbox_timing (
     input  wire [7:0] value,
     output wire [7:0] result
@@ -178,7 +176,7 @@ module mdm_aes_sbox_timing (
 endmodule
 
 // Preserve the Python-model stage hierarchy while removing only the internal
-// S-box partition boundaries for the timing-oriented integrity datapath.
+// S-box partition boundaries for the timing-oriented AES data path.
 module mdm_aes_balanced_subbytes_timing (
     input  wire [127:0] state_in,
     output wire [127:0] state_out
@@ -269,8 +267,8 @@ module mdm_aes_balanced_round_timing #(
     endgenerate
 endmodule
 
-// Timing-oriented five-cycle AES-128 for integrity. Two cascaded rounds
-// are still completed per clock; the request/ready/done protocol is unchanged.
+// Timing-oriented five-cycle AES-128 for either security lane. Two cascaded
+// rounds complete per clock; the request/ready/done protocol is unchanged.
 // A request is accepted on start && ready. The final edge may also accept
 // the next request. This is Verilog-2005 RTL, not SystemVerilog.
 module mdm_aes128_balanced_timing (

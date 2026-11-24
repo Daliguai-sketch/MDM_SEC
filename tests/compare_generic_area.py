@@ -97,7 +97,7 @@ def main():
         old_aes = synth(args.yosys, output, "aes-before", base_rtl,
                         [base_rtl / "mdm_aes128.v"], "mdm_aes128", {})
         new_aes_files = [rtl / n for n in ("mdm_aes_sbox.v", "mdm_aes_blocks.v",
-                         "mdm_aes_balanced_blocks.v", "mdm_aes128_serial.v", "mdm_aes128_fast.v", "mdm_aes128_balanced.v",
+                         "mdm_aes_balanced_blocks.v", "mdm_aes128_serial.v", "mdm_aes128_fast.v",
                          "mdm_aes128_balanced_timing.v", "mdm_aes128.v")]
         new_aes = synth(args.yosys, output, "aes-after", rtl, new_aes_files,
                         "mdm_aes128", {"AES_LOW_AREA": 1})

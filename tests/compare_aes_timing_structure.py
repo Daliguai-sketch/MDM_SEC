@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare original/timing AES generic gate topology; this is NOT STA.
+"""Compare fast/balanced-opt AES generic gate topology; this is NOT STA.
 
 Uses the same Yosys -noabc synthesis for both cores, then walks the flattened
 single-bit generic cells. Every cell has unit weight; loads, gate sizes,
@@ -98,19 +98,19 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     version = subprocess.check_output([args.yosys, "-V"], text=True).strip()
-    original = synth(args.yosys, output, "mdm_aes128_balanced", "original")
-    timing = synth(args.yosys, output, "mdm_aes128_balanced_timing", "timing")
-    diff = timing["cells"] - original["cells"]
+    fast = synth(args.yosys, output, "mdm_aes128_fast", "fast")
+    opt = synth(args.yosys, output, "mdm_aes128_balanced_timing", "balanced-opt")
+    diff = opt["cells"] - fast["cells"]
     summary = (f"{version}\n"
                "Method: synth -noabc; check -assert; flatten; count generic cells and "
-               "unit-weight Q-to-D topology.\n"
+               "unit-weight Q-to-D topology (fast -> balanced-opt).\n"
                "NOT target cell area, mapped delay, STA, or physical timing.\n"
-               f"Generic cells: {original['cells']:,} -> {timing['cells']:,} "
-               f"({diff:+,}, {diff * 100 / original['cells']:+.2f}%)\n"
+               f"Generic cells: {fast['cells']:,} -> {opt['cells']:,} "
+               f"({diff:+,}, {diff * 100 / fast['cells']:+.2f}%)\n"
                f"round_state[99] Q to round_state[2] D: "
-               f"{original['path_99_2']} -> {timing['path_99_2']} generic levels\n"
+               f"{fast['path_99_2']} -> {opt['path_99_2']} generic levels\n"
                f"Longest round_state Q to round_state D: "
-               f"{original['any_feedback']} -> {timing['any_feedback']} generic levels\n"
+               f"{fast['any_feedback']} -> {opt['any_feedback']} generic levels\n"
                f"Full JSON and logs: {output}\n")
     (output / "summary.txt").write_text(summary, encoding="utf-8")
     print(summary, end="")

@@ -3,7 +3,7 @@
 // final-edge reissue, idle gaps and reset at several points in a block.
 module tb_aes_random #(
     parameter integer TEST_AES_LOW_AREA=1,
-    parameter integer TEST_BALANCED_TIMING_OPT=0
+    parameter integer TEST_BALANCED_TIMING_OPT=1
 );
     localparam integer CYCLES = (TEST_AES_LOW_AREA==1) ? 50 : 5;
     localparam integer MAX_VECTORS = 1024;

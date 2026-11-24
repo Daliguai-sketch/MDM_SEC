@@ -18,10 +18,10 @@ ARCHIVE_NAME = PACKAGE_NAME + ".tar.gz"
 # testbenches live in design/tb. No Makefile or Python sources go to U network.
 RTL_FILES = (
     "mdm_aes_sbox.v", "mdm_aes_blocks.v", "mdm_aes_balanced_blocks.v", "mdm_aes128_serial.v",
-    "mdm_aes128_fast.v", "mdm_aes128_balanced.v", "mdm_aes128_balanced_timing.v",
+    "mdm_aes128_fast.v", "mdm_aes128_balanced_timing.v",
     "mdm_aes128.v", "mdm_snow3g.v", "mdm_zuc.v",
     "mdm_packet_buffer.v", "mdm_cipher.v", "mdm_integrity.v", "mdm_sec.v",
-    "mdm_sboxes.vh", "mdm_aes_sbox.vh", "mdm_aes_mix_balanced.vh",
+    "mdm_sboxes.vh", "mdm_aes_sbox.vh",
 )
 PACKAGE_FILES = {
     "docs/u_network_test.md": "README_U.md",

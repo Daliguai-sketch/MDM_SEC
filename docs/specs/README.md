@@ -1,11 +1,11 @@
 # RTL 设计规格书
 
-五份 Word 文档状态均为 **V0.2 Draft，待评审**。V0.2 补充算法、S 盒、流程/时序/设计框图，不改变 RTL。SNOW/ZUC 文档的相关 RTL 最早基线为 `938ac3409dbcf2c2bc4244f4b3d60f1b19da0c4c`；AES 和顶层以与文档同一 Git 提交中的 RTL 为准：
+五份 Word 文档状态均为 **V0.3 Draft，待评审**。V0.3 将 AES 收敛为 fast、serial 和 balanced-opt 三种实现，并同步参数迁移、两通道选择与验证；保留 V0.2 的算法、S 盒、流程/时序及设计框图。SNOW/ZUC 文档的相关 RTL 最早基线为 `938ac3409dbcf2c2bc4244f4b3d60f1b19da0c4c`；AES 和顶层以与文档同一 Git 提交中的 RTL 为准：
 
 | 文档 | 对应实际 Verilog 模块 | 内容范围 |
 |---|---|---|
-| [aes_core_spec.docx](aes_core_spec.docx) | `mdm_aes128` | AES-128 包装器及 50/5/5 拍模式，包括 balanced 时序候选 |
-| [aes_balanced_core_spec.docx](aes_balanced_core_spec.docx) | `mdm_aes128_balanced`、`mdm_aes128_balanced_timing` | 5 拍 balanced 原版和完整性时序候选的架构、接口、验证和 PPA 限制 |
+| [aes_core_spec.docx](aes_core_spec.docx) | `mdm_aes128` | AES-128 包装器及 serial / fast / balanced-opt 三种模式 |
+| [aes_balanced_core_spec.docx](aes_balanced_core_spec.docx) | `mdm_aes128_balanced_timing` | 5 拍 balanced-opt 的架构、接口、验证和 PPA 限制 |
 | [snow3g_core_spec.docx](snow3g_core_spec.docx) | `mdm_snow3g` | SNOW 3G 密钥流、初始化及暂停协议 |
 | [zuc_core_spec.docx](zuc_core_spec.docx) | `mdm_zuc` | ZUC-128 密钥流、初始化及暂停协议 |
 | [mdm_sec_spec.docx](mdm_sec_spec.docx) | `mdm_sec` | 六种包模式、两条独立算法通道、共享缓冲及顶层接口 |

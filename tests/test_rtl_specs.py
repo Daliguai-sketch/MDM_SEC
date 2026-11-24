@@ -29,7 +29,7 @@ W = "{" + NS["w"] + "}"
 BASELINE = "938ac3409dbcf2c2bc4244f4b3d60f1b19da0c4c"
 DOCUMENTS = {
     "aes_core_spec": ("rtl/mdm_aes128.v", "mdm_aes128"),
-    "aes_balanced_core_spec": ("rtl/mdm_aes128_balanced.v", "mdm_aes128_balanced"),
+    "aes_balanced_core_spec": ("rtl/mdm_aes128_balanced_timing.v", "mdm_aes128_balanced_timing"),
     "snow3g_core_spec": ("rtl/mdm_snow3g.v", "mdm_snow3g"),
     "zuc_core_spec": ("rtl/mdm_zuc.v", "mdm_zuc"),
     "mdm_sec_spec": ("rtl/mdm_sec.v", "mdm_sec"),
@@ -138,9 +138,13 @@ def expected_paragraphs(source):
     return Counter(paragraphs)
 
 
-def rtl_ports(path):
-    """Read the repository's ANSI-style Verilog port declarations."""
-    header = path.read_text(encoding="utf-8").split(");", 1)[0]
+def rtl_ports(path, module):
+    """Read ANSI-style ports of the named module (files can contain several)."""
+    text = path.read_text(encoding="utf-8")
+    matches = list(re.finditer(r"^\s*module\s+" + re.escape(module) + r"\b", text, re.MULTILINE))
+    if len(matches) != 1:
+        raise AssertionError(f"Expected exactly one {module} module in {path}")
+    header = text[matches[0].start():].split(");", 1)[0]
     pattern = re.compile(
         r"^\s*(input|output)\s+(?:wire|reg)\s+"
         r"(?:\[(\d+)\s*:\s*(\d+)\]\s*)?(\w+)\s*,?\s*$", re.MULTILINE
@@ -329,6 +333,7 @@ class RtlDesignSpecsTest(unittest.TestCase):
                         self.assertNotIn(BASELINE, all_text)
                     else:
                         self.assertIn(BASELINE, all_text)
+                    self.assertIn("V0.3 / Draft", all_text)
                     self.assertIn(hashlib.sha256(source_bytes).hexdigest(), all_text)
                     self.assertIn(module, all_text)
                     self.assertNotIn("[[DIAGRAM:", all_text)
@@ -354,7 +359,7 @@ class RtlDesignSpecsTest(unittest.TestCase):
                     self.assertEqual(len(bookmarks), len(source_headings))
                     self.assertEqual(len(links), len(source_headings))
                     self.assertEqual(set(links), set(bookmarks), "Broken or missing navigation link")
-                    self.assertEqual(docx_ports(body), rtl_ports(ROOT / rtl_path))
+                    self.assertEqual(docx_ports(body), rtl_ports(ROOT / rtl_path, module))
 
     def test_figure_inventory(self):
         referenced = set()
@@ -363,6 +368,15 @@ class RtlDesignSpecsTest(unittest.TestCase):
             referenced.update(match.group(2) for match in FIGURE_PATTERN.finditer(source))
         present = {p.stem for p in (SPEC_DIR / "figures").glob("*.png")}
         self.assertEqual(present, referenced, "Missing or orphaned Markdown figure")
+
+    def test_retired_aes_sources_are_not_in_current_specs(self):
+        for stem in ("aes_core_spec", "aes_balanced_core_spec", "mdm_sec_spec"):
+            source = (SOURCE_DIR / (stem + ".md")).read_text(encoding="utf-8")
+            with self.subTest(document=stem):
+                self.assertIn("balanced-opt", source)
+                for retired in ("rtl/mdm_aes128_balanced.v", "rtl/mdm_aes_mix_balanced.vh",
+                                "test-balanced-fallback"):
+                    self.assertNotIn(retired, source)
 
     def test_complete_documented_sboxes(self):
         aes_golden = [int(x, 16) for x in (ROOT / "tests/rtl/aes_sbox.hex").read_text().split()]
@@ -404,9 +418,9 @@ class RtlDesignSpecsTest(unittest.TestCase):
         expected = {
             "aes_core_spec": ("E50", "E5", "69c4e0d86a7b0430d8cdb78070b4c55a", "AES_LOW_AREA",
                               "BALANCED_TIMING_OPT", "g_balanced_timing"),
-            "aes_balanced_core_spec": ("E5", "AES_LOW_AREA=2", "7,321", "6,937", "7,097",
+            "aes_balanced_core_spec": ("E5", "AES_LOW_AREA=2", "7,321", "7,097",
                                        "AES_INTEGRITY_TIMING_OPT", "mdm_aes128_balanced_timing",
-                                       "70", "68", "69c4e0d86a7b0430d8cdb78070b4c55a"),
+                                       "70", "67", "69c4e0d86a7b0430d8cdb78070b4c55a"),
             "snow3g_core_spec": ("E33", "E34", "c54058f7", "advance", "35.216"),
             "zuc_core_spec": ("E33", "E34", "27bede74", "advance", "35.222"),
             "mdm_sec_spec": ("rsp_mac_match", "rsp_error", "MAX_BYTES", "65531",

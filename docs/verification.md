@@ -1,35 +1,37 @@
 # 六模式 RTL 验证记录
 
-## 完整性 5 拍时序候选补充验证
+## 三种 AES 实现收敛后的验证
 
-环境为 Verilator 5.49、Yosys 0.71（YoWASP）、Python 3.11、PyCryptodome 和 Icarus WebAssembly 0.1.4。`AES_LOW_AREA=2` 时，完整性默认使用新候选、cipher 保持原 balanced；`AES_INTEGRITY_TIMING_OPT=0` 为完整性回退，均为 5 拍延迟和最小启动间隔。目标工艺和约束未提供。
+环境为 Verilator 5.38、Yosys 0.71（YoWASP）、Python 3.11、PyCryptodome 3.24.1 和 Icarus WebAssembly 0.1.4。`AES_LOW_AREA=2` 的 cipher 和 integrity 均为独立 balanced-opt；原 balanced 已删除。目标工艺和约束未提供。
 
-- `make -j2 JOBS=1 test`：PASS，包含低面积 2641+240+12 包、原高速/时序候选/回退三种顶层配置各 2641+12 包，合计 10,852 个大规模包及默认 20 个定向包；候选和回退均覆盖两通道并发、依赖、背压和最大容量。另含 lint、编码、规格书、原语、缓存、示例和测试流程。
-- `make test-aes`：低面积、原高速、原 balanced 和时序候选四种实现各 515 块，覆盖逐块变化 key、最早连续启动、忙时请求与复位。AES 期望值逐块独立交叉检查 PyCryptodome。
-- `make test-aes-balanced-blocks`：518 个 Python 阶段向量、全部 256 个 Rcon，检查候选和原版正常/末轮结果；`test-primitives` 对照独立表穷举两种 S-box 的 256 个输入。
-- `make test-aes-formal`：两种列混合对全部 32 位输入 SAT 成功，两个 S-box 对全部 8 位输入 SAT 成功；原高速与原 balanced 证明 912 点，原 balanced 与候选证明 10,368 点，包括状态和输出。后者精确排除第二轮 `u_add_round_key.state_in/state_out` 两个语义已改变的内部同名信号；未排除外部端口或状态寄存器。整核证明使用下述 `async2sync` 复位模型，不等于门级或任意异步复位签核。
-- `make test-aes-hierarchy`：非 flatten 的两个单核各保留按轮、SubBytes、ShiftRows、MixColumns、AddRoundKey 和密钥扩展划分的可例化层次；候选保留 32 个数据 S-box 和 8 个密钥 S-box。顶层展开检查证实默认/回退时的 cipher 和 integrity 各有独立核。
-- `make wave WAVE_AES_LOW_AREA=2`：20 个定向包及 8 个独立 AES 块通过，包级 VCD 同时检查原 cipher 和候选 integrity 的内部活动；独立 AES VCD 使用原 balanced。两份 VCD 均检查关键事件，不等于 FSDB 测试。
-- 更新的转网包含 24 个与工作区逐字节一致的源文件。Verilator 从包内两级 filelist 编译候选，2641 个包、20 个定向包和 515 个 AES 块通过。Icarus 四态仿真在包内 testbench 的内存副本选择候选和回退，两种各通过 20 个定向包和 8 个 AES 块；FSDB 宏只做 HDL 编译，未执行 PLI。`make test-u-network` 的 19 项脚本检查及 `make test-vcs-flow` 的 9 项检查使用模拟工具，不是实际 VCS/Verdi 验证。
-- `make yosys-check CHECK_MAX_BYTES=2048 CHECK_AES_LOW_AREA=2` 与同参数 `make synth-generic` 通过；`make yosys-parameters` 拒绝非法顶层时序选项等参数。同一 Yosys 0.71 `synth -noabc` 口径下，完整性回退/候选的顶层分别为 117,172 / 117,332 个通用单元，包含以通用触发器实现的包缓存，不是实际 SRAM 或工艺面积。
-- 单核 `make area-aes-timing`：原 balanced / 候选通用单元数为 6,937 / 7,097；RTL `round_state[99]` Q 到 `[2]` D 的最长单位权重拓扑 65 / 61 级，任意状态反馈最深 68 / 66 级。没有标准单元、布线或延时权重，这些值既不是工艺面积，也不能推算节省的皮秒或证明 375 MHz 收敛。保层面积与正常优化 PPA 应分别评估，见 [aes_balanced_hierarchy.md](aes_balanced_hierarchy.md)。
+- `make -j2 JOBS=1 test`：PASS。低面积 2641+240+12 包、fast 和双通道 balanced-opt 各 2641+12 包，合计 **8,199 个大规模包**及 20 个默认定向包。另含 lint、规格书、示例、原语、通道、缓存、波形冒烟及脚本测试。
+- `make test-aes`：serial、fast、balanced-opt 各 **515 块**，覆盖逐块变化的 key、最早连续启动、忙时请求及复位。AES 期望值逐块交叉检查 PyCryptodome；对应的块延迟/最小启动间隔为 **50/5/5 拍**。
+- `make test-aes-balanced-blocks`：518 个 Python 中间阶段向量、全部 256 个 Rcon，检查正常/末轮结果及两次密钥扩展；`test-primitives` 对照独立表穷举两个 S-box 的所有 256 个输入。
+- `make test-aes-formal`：balanced-opt 的 32 位 MixColumns 与独立矩阵、两个 8 位 S-box 的全输入 SAT 成功；fast 对 balanced-opt 整核 **784 个等价点全部证明**，未使用 blacklist。整核证明使用 `async2sync` 复位模型，不等于门级或任意异步复位签核。
+- `make test-aes-hierarchy`：非 flatten 综合后的 balanced-opt 有 32 个数据 S-box、8 个密钥 S-box、8 个列混合和独立末轮输出；顶层模式 2 展开确认 cipher 和 integrity 各有一个独立核。
+- `make test-retired-balanced`：Verilator 检查独立包装器、完整性通道和顶层。模式 2 的旧参数为 0 时明确拒绝；模式 0/1 的旧参数为 0 仍可使用。`make yosys-parameters` 同样拒绝已退役或越界配置；`make yosys-check CHECK_MAX_BYTES=2048 CHECK_AES_LOW_AREA=2` 报告 0 个结构问题。
+- `make wave WAVE_AES_LOW_AREA=2`：20 个定向包和 8 个 AES 块通过，两份 VCD 的核心活动和关键事件检查通过；不是 FSDB 测试。
+- 新转网包从当前 RTL 和向量生成：包内两级 filelist 经 Verilator 实际展开通过。Icarus 四态仿真读取包内 RTL 和向量，在 testbench **内存副本**设模式 2，8 个 AES 块和 20 个顶层六模式定向包通过（含两通道并发）；独立测试也确认旧模式 2 配置在 Icarus 展开时被拒绝。`make test-u-network` 的 19 项及 `make test-vcs-flow` 的 9 项为模拟 VCS 的脚本测试，不是实际 VCS/Verdi 或 FSDB 验证。
+- `make area-aes-balanced` / `make area-aes-timing`：Yosys 0.71 单核 serial / fast / balanced-opt 为 **2,179 / 7,321 / 7,097** 个通用单元；fast / balanced-opt 最长未加权拓扑 70 / 67 级，任意状态反馈最深 70 / 66 级。无目标库、布线或延时权重，不能推算面积、节省的 ps 或证明 375 MHz 收敛。保层面积与正常优化 PPA 应分别评估，见 [aes_balanced_hierarchy.md](aes_balanced_hierarchy.md)。
+
+用户反馈现场将 cipher 选为 balanced-opt 后综合无违例且回归通过，但现场副本、约束及报告不在仓库；这不是对当前提交的工艺签核。真实 VCS/Verdi PLI、原生 FSDB、目标库多角 setup/hold 和布线后 STA 仍需现场确认。
 
 ## 历史：balanced AES 层次化后的补充回归（时序候选之前）
 
-以分层后的 RTL、Verilator 5.49、Yosys 0.64（YoWASP）、Python 3.11 和 PyCryptodome 重新验证：
+以下为删除原 balanced **之前**的历史结果，不能将当时的模式 2、实例路径或命令当作当前配置。以分层后的 RTL、Verilator 5.49、Yosys 0.64（YoWASP）、Python 3.11 和 PyCryptodome 重新验证：
 
 - `make -j2 test`：PASS，三种 AES 各 515 块；balanced 的两路通道、2641 个默认容量包、12 个最大容量包及全部回归通过。
 - `make test-aes-balanced-blocks`：PASS，518 个 Python 模型中间状态向量，检查所有 256 个 Rcon 值、普通轮和末轮旁路及两次密钥扩展；包含 FIPS-197 中间状态与轮密钥固定答案。
-- `make test-aes-hierarchy`：PASS，Yosys 非 flatten 综合后单核保留 2 轮、2 级密钥扩展、40 个 S-box、8 个列混合及 3 个 AddRoundKey；`MAX_BYTES=16` 的顶层展开确认 cipher / integrity 两路独立选择 balanced。分层通用单元数见 [aes_balanced_hierarchy.md](aes_balanced_hierarchy.md)。
+- `make test-aes-hierarchy`：PASS，Yosys 非 flatten 综合后单核保留 2 轮、2 级密钥扩展、40 个 S-box、8 个列混合及 3 个 AddRoundKey；`MAX_BYTES=16` 的顶层展开确认 cipher / integrity 两路独立选择 balanced。当前 balanced-opt 的层次与单元数另见 [aes_balanced_hierarchy.md](aes_balanced_hierarchy.md)。
 - `make test-aes-formal`：PASS，实例化列混合模块的全输入 SAT 和原高速核/分层 balanced 核 912 个等价点；异步复位采用下述 `async2sync` 模型。
-- `make area-aes-balanced`：PASS，相同 Yosys 0.64 `-noabc` 口径仍为原高速 7,321、分层 balanced 6,937 个通用单元，最长未加权路径 70/68。`make yosys-check CHECK_MAX_BYTES=2048 CHECK_AES_LOW_AREA=2` 和 `make synth-generic SYNTH_MAX_BYTES=2048 SYNTH_AES_LOW_AREA=2` 通过，后者为 117,163 个通用单元（含通用逻辑实现的包缓存）；当时两路均为原 balanced，现在重现该配置须加 `SYNTH_AES_INTEGRITY_TIMING_OPT=0`。这些都不是目标工艺面积或 STA。
+- `make area-aes-balanced`：PASS，相同 Yosys 0.64 `-noabc` 口径仍为原高速 7,321、分层 balanced 6,937 个通用单元，最长未加权路径 70/68。`make yosys-check CHECK_MAX_BYTES=2048 CHECK_AES_LOW_AREA=2` 和 `make synth-generic SYNTH_MAX_BYTES=2048 SYNTH_AES_LOW_AREA=2` 通过，后者为 117,163 个通用单元（含通用逻辑实现的包缓存）；当时两路均为已删除的原 balanced，当前 RTL 不再支持重现此配置。这些都不是目标工艺面积或 STA。
 - `make wave WAVE_AES_LOW_AREA=2`：PASS，balanced 的 20 个定向包、8 个 AES 块及两份 VCD 活动检查通过。
 - 新转网包中 23 个源文件逐字节与工作区一致。使用包内两级 filelist 和 Verilator，balanced 配置通过 515 个 AES 块、2641 个完整包和 20 个定向包；`make test-u-network` 的 18 项脚本检查为模拟 VCS，并非真实 FSDB 验证。
 - Icarus WebAssembly 0.1.4 四态冒烟：分层子模块 518 向量、balanced AES 8 块、双通道 20 个定向包通过；测试参数在测试平台副本内存中设为 2。未运行真实 VCS、Verdi PLI、FSDB、`rc_flow` 或目标工艺综合。
 
-## 既有六模式回归记录
+## 历史：既有六模式回归记录
 
-以下为此前共享原地缓存和可选低面积/原高速/5 拍优化 AES 的回归。环境：Verilator 5.38、Yosys 0.64（YoWASP）、Python 3.11、PyCryptodome 3.23。命令从仓库根目录执行；`build/` 是生成目录。
+以下为删除原 balanced 之前共享原地缓存和可选低面积/原高速/5 拍优化 AES 的历史回归；当时的优化版不是当前 balanced-opt。环境：Verilator 5.38、Yosys 0.64（YoWASP）、Python 3.11、PyCryptodome 3.23。命令从仓库根目录执行；`build/` 是生成目录。
 
 | 命令 | 结果 |
 |---|---|

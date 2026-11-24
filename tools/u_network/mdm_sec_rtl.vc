@@ -4,7 +4,6 @@
 ../vc/mdm_aes_balanced_blocks.v
 ../vc/mdm_aes128_serial.v
 ../vc/mdm_aes128_fast.v
-../vc/mdm_aes128_balanced.v
 ../vc/mdm_aes128_balanced_timing.v
 ../vc/mdm_aes128.v
 ../vc/mdm_snow3g.v

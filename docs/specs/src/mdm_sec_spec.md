@@ -40,7 +40,7 @@
 | 算法 | 加密/完整性独立选择 ID 0～3，分别有自己的密钥与算法实例。 |
 | 模式 | 0 仅机密性；1 仅完整性；2 完整性后附 MAC 加密；3 密文完整性；4 原文完整性并加/解密；5 解密、提取并比较 MAC。 |
 | 并行性 | 模式 2～5 输入完全装载后两条通道同沿启动，可重叠处理；依赖保护可能暂停任一通道。 |
-| AES 参数 | `AES_LOW_AREA=1` 默认 50 周期/块；0 为原 5 拍高速版；2 为 5 拍 balanced。`AES_LOW_AREA=2` 时默认仅完整性使用时序候选，可参数回退。 |
+| AES 参数 | `AES_LOW_AREA=1` 默认 50 周期/块；0 为原 5 拍高速版；2 为 5 拍 balanced-opt，cipher 与 integrity 均使用独立实例。 |
 | 长度 | `MAX_BYTES` 默认 2048，允许 1～65535；输入/输出长度和内部字节指针均为 16 bit。 |
 | 认证失败 | 模式 5 的不匹配通过 `rsp_mac_match` 报告，不等价于 `rsp_error`，且 RTL 仍输出明文。 |
 
@@ -187,7 +187,7 @@ RTL 保持相邻两个 32-bit 密钥流字 `zcur/znext` 并在一个输入字内
 | EIA1 | `SNOW_KEYS -> SNOW_DATA -> SNOW_FINAL`；独立 `u_snow` 产生 5 字密钥流，64-bit `p/q/eval_reg` 与复用 GF64 乘法器计算；空消息从 KEYS 直接到 FINAL。 |
 | EIA2 | `AES_L_REQ/WAIT -> AES_COLLECT -> AES_BLOCK_REQ/WAIT`；独立 `u_aes` 生成 L、K1/K2 和逐块 CBC 链，非末块返回 COLLECT；空消息在 L_WAIT 后直接计算前缀末块。 |
 | EIA3 | `ZUC_FIRST -> ZUC_SECOND -> ZUC_DATA`；独立 `u_zuc`、`zcur/znext/zacc` 和消息位窗口形成 MAC；空消息在 SECOND 结束。 |
-| 参数 | `AES_LOW_AREA=2` 时，仅此通道由 `AES_INTEGRITY_TIMING_OPT` 选择时序候选或原 balanced；仓库的 `u_cipher` 不受此开关影响。 |
+| 参数 | `AES_LOW_AREA=2` 时本通道和 cipher 均选独立 balanced-opt；旧开关 `AES_INTEGRITY_TIMING_OPT=0` 在该模式下被拒绝。 |
 
 #### 2.2.1.3 u_cipher 与 u_integrity 交互设计框图
 
@@ -303,7 +303,7 @@ enc_in_valid = RUN AND enc_started AND not enc_finished
 
 | 资源 | 当前结构 / 已知范围 |
 | --- | --- |
-| AES 原语 | 每个通道 1 个，共 2 个；共用 `AES_LOW_AREA`，其值为 2 时完整性可单独选择 5 拍时序候选。 |
+| AES 原语 | 每个通道 1 个，共 2 个；共用 `AES_LOW_AREA`，其值为 2 时两通道均使用独立 5 拍 balanced-opt。 |
 | SNOW 3G / ZUC | 每个通道分别各 1 个；共 2 个 SNOW 和 2 个 ZUC。 |
 | 默认共享缓冲 | 16 bank × 129 行 × 8 bit = 16,512 声明 bit，另有读写地址和旋转逻辑。 |
 | AES-CTR 缓冲 | cipher 通道 2 个 128-bit 密钥流槽及有效位。 |
@@ -345,9 +345,9 @@ enc_in_valid = RUN AND enc_started AND not enc_finished
 
 | 验证项目 | 既有结果 / 限制 |
 | --- | --- |
-| 包级大规模回归 | Verilator：低面积 2641+240+12 包，原高速、balanced 候选和回退配置各 2641+12 包；覆盖六模式、算法组合、长度、背压和依赖。 |
+| 包级大规模回归 | Verilator：低面积、原高速和双通道 balanced-opt 覆盖六模式、算法组合、长度、背压、依赖及容量边界；详见验证记录。 |
 | 波形定向包 | 低面积、原高速和 5 拍优化配置各 20 包；包括模式 5 成功/失败、同沿读旧值和关键依赖等待。 |
-| AES 原语 | 低面积、原高速、原 balanced 和时序候选四种实现各 515 块；检查固定答案、50/5/5/5 周期延迟与 II。 |
+| AES 原语 | 低面积、原高速和 balanced-opt 三种实现各 515 块；检查固定答案、50/5/5 周期延迟与 II。 |
 | 其他原语和缓存 | SNOW/ZUC 已知答案及 stall；缓冲最小/一般/最大容量和读写碰撞回归。 |
 | 外网/U 网转运 | 外网生成并打包向量，U 网采用无需项目 Python/Make 的 `run.sh`；默认定向测试使用 20 包及 8 个 AES 块。mock 检查不等于真实 VCS/PLI。 |
 | 未完成 | 当前执行环境没有真实 VCS/Verdi 许可；原生 FSDB、目标工艺综合网表/STA、门级、系统级形式和安全认证需另行确认。优化 AES 的局部形式检查见其独立规格书。 |
@@ -359,8 +359,8 @@ enc_in_valid = RUN AND enc_started AND not enc_finished
 | 参数 | 默认值 | 合法范围 / 作用 |
 | --- | --- | --- |
 | `MAX_BYTES` | 2048 | 整数 1～65535；限制输入 `A+B` 字节数，内部缓冲最多额外容纳 4 字节。 |
-| `AES_LOW_AREA` | 1 | 1 为 50 周期低面积，0 为原 5 周期高速，2 为 5 周期 balanced；影响 cipher 与 integrity 两个 AES 实例。 |
-| `AES_INTEGRITY_TIMING_OPT` | 1 | 仅在 `AES_LOW_AREA=2` 时影响 integrity：1 为时序候选、0 为原 balanced；不影响 cipher，其他值非法。 |
+| `AES_LOW_AREA` | 1 | 1 为 50 周期低面积，0 为原 5 周期高速，2 为 5 周期 balanced-opt；影响 cipher 与 integrity 两个 AES 实例。 |
+| `AES_INTEGRITY_TIMING_OPT` | 1 | 旧迁移保护参数：模式 2 必须为 1；0 不再能回退原 balanced。模式 0/1 下 0/1 均不影响选择；其他值非法。 |
 
 参数在 elaboration 时固定，不是命令寄存器；非法配置在 RTL 仿真/层次检查中报错，不是运行时 `rsp_error`。
 

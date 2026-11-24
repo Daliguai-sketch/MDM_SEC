@@ -29,7 +29,7 @@ RTL_BASELINE = "938ac3409dbcf2c2bc4244f4b3d60f1b19da0c4c"
 DATE = "2026-11-17"
 DOCUMENTS = {
     "aes_core_spec": ("AES_CORE", "mdm_aes128 · AES-128 加密块原语", "aes"),
-    "aes_balanced_core_spec": ("AES_BALANCED_CORE", "mdm_aes128_balanced · 5 拍面积优化 AES-128 原语", "aes_balanced"),
+    "aes_balanced_core_spec": ("AES_BALANCED_CORE", "mdm_aes128_balanced_timing · 5 拍 balanced-opt AES-128 原语", "aes_balanced"),
     "snow3g_core_spec": ("SNOW3G_CORE", "mdm_snow3g · SNOW 3G 密钥流原语", "snow"),
     "zuc_core_spec": ("ZUC_CORE", "mdm_zuc · ZUC-128 密钥流原语", "zuc"),
     "mdm_sec_spec": ("MDM_SEC", "mdm_sec · 包级安全处理顶层", "mdm"),
@@ -308,13 +308,13 @@ def diagram_aes():
     draw_box(draw, (385, 355, 685, 585), "Generate select", ["AES_LOW_AREA", "static 1 / 0 / 2"], "#FFF1D8")
     draw_box(draw, (790, 175, 1350, 335), "Serial  |  1  |  50 cycles", ["4 shared S-boxes", "10 rounds; II = 50"], "#E7F3EC")
     draw_box(draw, (790, 395, 1350, 555), "Original fast  |  0  |  5 cycles", ["2 rounds per cycle", "10 rounds; II = 5"], "#E8EEF9")
-    draw_box(draw, (790, 615, 1350, 775), "Balanced  |  2  |  5 cycles", ["original or timing candidate", "10 rounds; II = 5"], "#E8EEF9")
+    draw_box(draw, (790, 615, 1350, 775), "Balanced-opt  |  2  |  5 cycles", ["depth-oriented datapath", "10 rounds; II = 5"], "#E8EEF9")
     draw_box(draw, (1480, 325, 1760, 615), "Result", ["done pulse", "block_out: 128b", "busy / ready"], "#E4F1F4")
     return image
 
 
 def diagram_aes_balanced():
-    image, draw = canvas("AES-128 balanced cores", "One block per 5 cycles; both rounds are combinational between state registers")
+    image, draw = canvas("AES-128 balanced-opt core", "One block per 5 cycles; both rounds are combinational between state registers")
     arrow(draw, [(285, 495), (350, 495)])
     arrow(draw, [(620, 495), (720, 495)])
     arrow(draw, [(1010, 495), (1100, 495)])
@@ -531,7 +531,7 @@ def prepare_document(name, subtitle, source_hash, outline, rtl_baseline=RTL_BASE
     set_font(sub.add_run(subtitle), size=12, color=TEAL)
     add_table(doc, [
         ["Document Control", "Value"],
-        ["版本 / 状态", "V0.2 / Draft — 待评审，非工艺与安全签核"],
+        ["版本 / 状态", "V0.3 / Draft — 待评审，非工艺与安全签核"],
         ["编制日期", DATE],
         ["RTL 基线提交", rtl_baseline],
         ["编制 / 审核 / 批准", "TBD / TBD / TBD"],
